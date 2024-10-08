@@ -72,16 +72,16 @@ class LoadMultiViewImageFromMultiSweepsFiles(object):
                 prob=1.0,
                 ):
 
-        self.sweeps_num = sweeps_num    
+        self.sweeps_num = sweeps_num#1
         self.to_float32 = to_float32
         self.color_type = color_type
         self.file_client_args = file_client_args.copy()
         self.file_client = None
-        self.pad_empty_sweeps = pad_empty_sweeps
+        self.pad_empty_sweeps = pad_empty_sweeps#True
         self.sensors = sensors
         self.test_mode = test_mode
         self.sweeps_id = sweeps_id
-        self.sweep_range = sweep_range
+        self.sweep_range = sweep_range#[3, 27]
         self.prob = prob
         if self.sweeps_id:
             assert len(self.sweeps_id) == self.sweeps_num
@@ -101,16 +101,17 @@ class LoadMultiViewImageFromMultiSweepsFiles(object):
                 - scale_factor (float): Scale factor.
                 - img_norm_cfg (dict): Normalization configuration of images.
         """
+        # import ipdb; ipdb.set_trace()
         sweep_imgs_list = []
         timestamp_imgs_list = []
-        imgs = results['img']
-        img_timestamp = results['img_timestamp']
-        lidar_timestamp = results['timestamp']
-        img_timestamp = [lidar_timestamp - timestamp for timestamp in img_timestamp]
+        imgs = results['img']#6张图片的原始像素信息
+        img_timestamp = results['img_timestamp']#6张图片的时间戳
+        lidar_timestamp = results['timestamp']#当前激光关键帧的时间戳
+        img_timestamp = [lidar_timestamp - timestamp for timestamp in img_timestamp]#图片时间戳与激光时间戳的差值
         sweep_imgs_list.extend(imgs)
         timestamp_imgs_list.extend(img_timestamp)
         nums = len(imgs)
-        if self.pad_empty_sweeps and len(results['sweeps']) == 0:
+        if self.pad_empty_sweeps and len(results['sweeps']) == 0:#当前帧数据sweeps字段为0的话，即没有非关键帧数据的情况下，用当前数据填充对应多少套
             for i in range(self.sweeps_num):
                 sweep_imgs_list.extend(imgs)
                 mean_time = (self.sweep_range[0] + self.sweep_range[1]) / 2.0 * 0.083
@@ -128,8 +129,8 @@ class LoadMultiViewImageFromMultiSweepsFiles(object):
             elif self.test_mode:
                 choices = [int((self.sweep_range[0] + self.sweep_range[1])/2) - 1] 
             else:
-                if np.random.random() < self.prob:
-                    if self.sweep_range[0] < len(results['sweeps']):
+                if np.random.random() < self.prob:#随机数<1.0,肯定是true
+                    if self.sweep_range[0] < len(results['sweeps']):#3<len(results['sweeps'])
                         sweep_range = list(range(self.sweep_range[0], min(self.sweep_range[1], len(results['sweeps']))))
                     else:
                         sweep_range = list(range(self.sweep_range[0], self.sweep_range[1]))
@@ -143,7 +144,7 @@ class LoadMultiViewImageFromMultiSweepsFiles(object):
                 if len(sweep.keys()) < len(self.sensors):
                     sweep = results['sweeps'][sweep_idx - 1]
                 # import ipdb; ipdb.set_trace()
-                results['filename'].extend([sweep[sensor]['data_path'] for sensor in self.sensors])
+                results['filename'].extend([sweep[sensor]['data_path'] for sensor in self.sensors])#这里出的问题，因为sweep中没有camera sensor字段
 
                 img = np.stack([mmcv.imread(sweep[sensor]['data_path'], self.color_type) for sensor in self.sensors], axis=-1)
                 

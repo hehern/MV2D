@@ -97,7 +97,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         ann_info = self.coco.load_anns(ann_ids)
         return self.get_ann_info_2d(self.data_infos_2d[data_id], ann_info)
 
-    def get_data_info(self, index):
+    def get_data_info(self, index):#调用这个
         """Get data info according to the given index.
         Args:
             index (int): Index of the sample data to get.
