@@ -1,4 +1,7 @@
 # MV2D
+
+## copy from https://github.com/tusen-ai/MV2D
+
 This repo is the official PyTorch implementation for paper:   
 [Object as Query: Lifting any 2D Object Detector to 3D Detection](https://arxiv.org/abs/2301.02364). Accepted by ICCV 2023.
 
