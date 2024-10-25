@@ -129,16 +129,16 @@ class CustomGridMask(nn.Module):
     def __init__(self, use_h, use_w, rotate=1, offset=False, ratio_range=(0.6, 0.95), mode=0, prob=1.,
                  interv_ratio=0.5, masked_value=0):
         super(CustomGridMask, self).__init__()
-        self.use_h = use_h
-        self.use_w = use_w
-        self.rotate = rotate
-        self.offset = offset
-        self.ratio_range = ratio_range
-        self.mode = mode
-        self.st_prob = prob
+        self.use_h = use_h#True
+        self.use_w = use_w#True
+        self.rotate = rotate#1
+        self.offset = offset#False
+        self.ratio_range = ratio_range#(0.4, 0.6)
+        self.mode = mode#1
+        self.st_prob = prob#0.7
         self.prob = prob
-        self.interv_ratio = interv_ratio
-        self.masked_value = masked_value
+        self.interv_ratio = interv_ratio#0.8
+        self.masked_value = masked_value#0
 
     def set_prob(self, epoch, max_epoch):
         self.prob = self.st_prob * epoch / max_epoch  # + 1.#0.5

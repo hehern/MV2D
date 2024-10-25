@@ -70,10 +70,10 @@ class CustomNuScenesDataset(NuScenesDataset):
         results['box_type_3d'] = self.box_type_3d
         results['box_mode_3d'] = self.box_mode_3d
 
-    def load_annotations_2d(self, ann_file):
+    def load_annotations_2d(self, ann_file):#加载2D标注数据
         self.coco = COCO(ann_file)
         self.cat_ids = self.coco.get_cat_ids(cat_names=self.CLASSES)
-        self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
+        self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}#类别序号dict
         self.impath_to_imgid = {}
         self.imgid_to_dataid = {}
         data_infos = []
@@ -88,6 +88,8 @@ class CustomNuScenesDataset(NuScenesDataset):
             total_ann_ids.extend(ann_ids)
         assert len(set(total_ann_ids)) == len(
             total_ann_ids), f"Annotation ids in '{ann_file}' are not unique!"
+        """
+        """
         self.data_infos_2d = data_infos
 
     def impath_to_ann2d(self, impath):
@@ -194,6 +196,12 @@ class CustomNuScenesDataset(NuScenesDataset):
             annos['gt_labels_2d'] = gt_labels_2d
             annos['gt_bboxes_2d_to_3d'] = gt_bboxes_2d_to_3d
             annos['gt_bboxes_ignore'] = gt_bboxes_ignore
+        
+        """
+        input_dict: {
+
+        }
+        """
         return input_dict
 
     def center_match(self, bboxes_a, bboxes_b):

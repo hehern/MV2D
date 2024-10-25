@@ -233,21 +233,22 @@ class MV2DSHead(MV2DHead):
         return known_labels, known_bboxs, output_known_class, output_known_coord, num_tgt
 
     def forward_train(self,
-                      x,
-                      img_metas,
-                      proposal_list,
-                      gt_bboxes,
-                      gt_labels,
-                      gt_bboxes_3d,
-                      gt_labels_3d,
-                      ori_gt_bboxes_3d,
+                      x,            #图像特征,tuple(torch.Tensor),feat[0].shape=[12, 256, 32, 88]
+                      img_metas,    #原始数据信息
+                      proposal_list,#2d pred
+                      gt_bboxes,    #2d gt-按照图片存放
+                      gt_labels,    #2d gt label
+                      gt_bboxes_3d, #3d gt
+                      gt_labels_3d, #3d gt label
+                      ori_gt_bboxes_3d,#3d gt 当前帧视角下所有的
                       ori_gt_labels_3d,
                       attr_labels,
                       gt_bboxes_ignore=None,
                       gt_masks=None,
                       **kwargs):
-        assert len(img_metas) // img_metas[0]['num_views'] == 1
+        assert len(img_metas) // img_metas[0]['num_views'] == 1#//向下取整
 
+        import ipdb; ipdb.set_trace()
         num_imgs = len(img_metas)
 
         proposal_boxes = []

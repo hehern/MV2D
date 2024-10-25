@@ -25,7 +25,7 @@ import matplotlib.pyplot as plt
 from PIL import Image, ImageDraw
 from pyquaternion import Quaternion
 
-# from mmdet3d.core.bbox import Box3DMode, LiDARInstance3DBoxes
+from mmdet3d.core.bbox import Box3DMode, LiDARInstance3DBoxes
 # from tools.data_converter.pick_data import get_pointnums
 
 dataroot = './data/nuscenes'
@@ -64,6 +64,16 @@ def draw_2d_points_to_image(img, points_2d, sample_token):
     save_path = 'viz/lane/' + sample_token + '_lane.jpg'  # 替换为你想要保存的路径和文件名  
     img.save(save_path) 
 
+def filter_lane_by_dis(map_lane, info, lane_ego_dis):
+    nearby_map_lane = []
+    ego_pose = torch.tensor([info["ego2global_translation"][0], info["ego2global_translation"][1]])
+    for polygon in map_lane:
+        global_cor = torch.tensor(polygon["points"])
+        distances = torch.norm(global_cor - ego_pose, dim=1)
+        if (distances < lane_ego_dis).any().item():
+            nearby_map_lane.append(global_cor)
+    return torch.cat(nearby_map_lane, dim=0)
+
 def project_lane_to_img(img, map_lane, info, sample_token):
 
     # global to ego transform
@@ -95,47 +105,57 @@ def project_lane_to_img(img, map_lane, info, sample_token):
     info["global2image"] = global2image
     global2image_tensor = torch.tensor(global2image)
 
+    # 筛选自车周围100m内的map_lane
+    lane_ego_dis = 100.0
+    global_cor = filter_lane_by_dis(map_lane, info, lane_ego_dis)
+
     # project
     points_2d = []
     width, height = img.size
-    for polygon in map_lane:
-        global_cor = torch.tensor(polygon["points"])
-        zero_tensor = torch.zeros(global_cor.shape[0], 1)
-        global_cor_3d = torch.cat((global_cor, zero_tensor), dim=1).transpose(1, 0)#(3,n)
-        cur_coords = global2image_tensor[:3, :3].matmul(global_cor_3d)
-        cur_coords += global2image_tensor[:3, 3].reshape(3, 1)# torch.Size([1, 3, n]),将点云转换到图片坐标系
 
-        # get 2d coords
-        dist = cur_coords[2, :]
-        cur_coords[2, :] = torch.clamp(cur_coords[2, :], 1e-5, 1e5)
-        cur_coords[:2, :] /= cur_coords[2:3, :]
+    zero_tensor = torch.zeros(global_cor.shape[0], 1)
+    global_cor_3d = torch.cat((global_cor, zero_tensor), dim=1).transpose(1, 0)#(3,n)
+    cur_coords = global2image_tensor[:3, :3].matmul(global_cor_3d)
+    cur_coords += global2image_tensor[:3, 3].reshape(3, 1)# torch.Size([1, 3, n]),将点云转换到图片坐标系
 
-        draw_points_2d = cur_coords[:2, :].transpose(1, 0)#(n,2)
-        depth = cur_coords[2:3, :].transpose(1, 0)
+    # get 2d coords
+    dist = cur_coords[2, :]
+    cur_coords[2, :] = torch.clamp(cur_coords[2, :], 1e-5, 1e5)
+    cur_coords[:2, :] /= cur_coords[2:3, :]
 
-        draw_points_2d[np.isnan(draw_points_2d)] = 0
-        del_xindx, del_yindx = np.where(draw_points_2d[:, :] == 0)
-        draw_points_2d = np.delete(draw_points_2d, del_xindx, axis=0)
-        on_img = (
-            (draw_points_2d[..., 0] < width)
-            & (draw_points_2d[..., 0] >= 0)
-            & (draw_points_2d[..., 1] < height)
-            & (draw_points_2d[..., 1] >= 0)
-        )
+    draw_points_2d = cur_coords[:2, :].transpose(1, 0)#(n,2)
+    depth = cur_coords[2:3, :].transpose(1, 0)
 
-        depth_mask = ((depth > 0) & (depth < 100.0)).squeeze()
-        draw_points_2d = draw_points_2d[on_img & depth_mask]
-        
-        if draw_points_2d.shape[0] != 0:
-            points_2d.append(draw_points_2d)
-    
-    points_2d = torch.cat(points_2d, dim=0)
-    if len(points_2d) != 0:
-        draw_2d_points_to_image(img, points_2d, sample_token)
+    draw_points_2d[np.isnan(draw_points_2d)] = 0
+    del_xindx, del_yindx = np.where(draw_points_2d[:, :] == 0)
+    draw_points_2d = np.delete(draw_points_2d, del_xindx, axis=0)
+    depth = np.delete(depth, del_xindx, axis=0)
+    global_cor = np.delete(global_cor, del_xindx, axis=0)
+    on_img = (
+        (draw_points_2d[..., 0] < width)
+        & (draw_points_2d[..., 0] >= 0)
+        & (draw_points_2d[..., 1] < height)
+        & (draw_points_2d[..., 1] >= 0)
+    )
+
+    depth_mask = ((depth > 0) & (depth < lane_ego_dis)).squeeze()
+    draw_points_2d = draw_points_2d[on_img & depth_mask]
+    global_cor = global_cor[on_img & depth_mask]
+
+    if len(draw_points_2d) != 0:
+        draw_2d_points_to_image(img, draw_points_2d, sample_token)
     else:
         print("no lane on this img: ", sample_token)
     # import ipdb; ipdb.set_trace()
-    return points_2d
+    return (global_cor, draw_points_2d)
+
+def filter_gt_by_cam_front(info):
+    #info['gt_boxes']lidar坐标系，x_size, y_size, z_size, l, w, h, yaw
+    #字段转换为8个角点坐标，依次投影到前向图片上,只要有一个角点在图片上就保留该标注
+    gt_bboxes_3d = info["gt_boxes"]
+    gt_bboxes_3d = LiDARInstance3DBoxes(
+        gt_bboxes_3d, box_dim=gt_bboxes_3d.shape[-1], origin=(0.5, 0.5, 0.5)
+    ).convert_to(Box3DMode.LIDAR)
 
 def filter_pkl(info):
     # 1.删除无效字段
@@ -145,6 +165,8 @@ def filter_pkl(info):
     del info['cams']['CAM_BACK']
     del info['cams']['CAM_BACK_LEFT']
     del info['cams']['CAM_BACK_RIGHT']
+    del info['gt_velocity']
+    del info['num_radar_pts']
 
     # 2.根据当前sample token判断属于哪个地图
     sample_token = info['token']
@@ -157,13 +179,17 @@ def filter_pkl(info):
     # 3.将车道线点投影到前向图片上
     img = Image.open(info['cams']['CAM_FRONT']['data_path'])
     # img.save('viz/lane/'+sample_token+'.jpg')
-    lane = project_lane_to_img(img, map_lane, info['cams']['CAM_FRONT'], sample_token)
+    lane_3d, lane_2d = project_lane_to_img(img, map_lane, info['cams']['CAM_FRONT'], sample_token)
 
     # 4.将能投影到当前图片上的车道线点保存在lane字段中
-    info['lane'] = lane
+    info['lane_3d'] = lane_3d #global坐标系下，需要再次转换到ego坐标系下
+    info['lane_2d'] = lane_2d #前向图片坐标系下
 
     # 5.标注框过滤：只保留前向图片上的标注
-    # import ipdb; ipdb.set_trace()
+    import ipdb; ipdb.set_trace()
+    filter_gt_by_cam_front(info)
+
+    # 6.添加2D标注框
 
     # info['num_lidar_pts'] = info['num_lidar_pts'][valid_mask]
     # info['gt_names'] = np.array(gt_names, dtype=str)[valid_mask]
@@ -172,18 +198,27 @@ def filter_pkl(info):
 
 def dense_lane(points):
 
-    original_points = np.array(points)  
+    original_points = np.array(points)
     
-    num_interpolations = 5
+    distance_m = 0.3
     new_points = list()
     for i in range(len(original_points)):  
-        start_point = original_points[i].reshape(1, -1)
-        end_point = original_points[(i + 1) % len(original_points)].reshape(1, -1)
+        start_point = original_points[i]
+        end_point = original_points[(i + 1) % len(original_points)]
         
-        t = np.linspace(0, 1, num_interpolations + 2)[1:-1].reshape(-1, 1)
-        interpolated_segment = start_point * (1 - t) + end_point * t
-        new_points.append(interpolated_segment)
-    
+        total_distance = np.sqrt((start_point[0]-end_point[0])**2 + (start_point[1]-end_point[1])** 2)
+        num_points = int(total_distance / distance_m) - 1
+        if num_points < 0:  
+            new_points += [start_point, end_point] 
+            continue
+        interpolated_points = []  
+        for i in range(1, num_points + 1):  
+            t = i / (num_points + 1) 
+            x = start_point[0] * (1 - t) + end_point[0] * t
+            y = start_point[1] * (1 - t) + end_point[1] * t
+            interpolated_points.append((x, y)) 
+        new_points += [start_point] + interpolated_points + [end_point]
+
     new_points = np.vstack(new_points)
     
     # 可视化结果  

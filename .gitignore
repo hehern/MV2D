@@ -16,3 +16,4 @@ mmdet3d_plugin/models/roi_heads/utils/__pycache__/*
 work_dirs/*
 viz/*
 weights/*
+tools/__pycache__/*

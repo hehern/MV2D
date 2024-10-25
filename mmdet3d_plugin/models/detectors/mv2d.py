@@ -29,21 +29,22 @@ class MV2D(Base3DDetector):
                  ):
         super(Base3DDetector, self).__init__(init_cfg)
 
-        self.base_detector = build_detector(base_detector)
-        self.neck = build_neck(neck)
+        self.base_detector = build_detector(base_detector)#TwoStageDetBase
+        self.neck = build_neck(neck)#FPN
         if train_cfg is not None:
             roi_head.update(train_cfg=train_cfg['rcnn'])
         if test_cfg is not None:
             roi_head.update(test_cfg=test_cfg['rcnn'])
         self.roi_head = build_head(roi_head)
 
-        self.use_grid_mask = isinstance(use_grid_mask, dict)
+        self.use_grid_mask = isinstance(use_grid_mask, dict)#true
         if self.use_grid_mask:
             self.grid_mask = CustomGridMask(**use_grid_mask)
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
 
+    # 对2d gt处理：扩充一列1，以及label:[num_boxes, 4->(x1, y1, x2, y2)]->[num_boxes, 6->(x1, y1, x2, y2, 1, label)]
     def process_2d_gt(self, gt_bboxes, gt_labels, device):
         """
         :param gt_bboxes:
@@ -57,6 +58,7 @@ class MV2D(Base3DDetector):
              labels.unsqueeze(-1).to(bboxes.dtype)], dim=-1).to(device)
                 for bboxes, labels in zip(gt_bboxes, gt_labels)]
 
+    # 对2d检测结果添加类别label并根据参数中设置的最小box size进行过滤
     def process_2d_detections(self, results, device):
         """
         :param results:
@@ -69,18 +71,18 @@ class MV2D(Base3DDetector):
         detections = [torch.cat(
             [torch.cat([torch.tensor(boxes), torch.full((len(boxes), 1), label_id, dtype=torch.float)], dim=1) for
              label_id, boxes in
-             enumerate(res)], dim=0).to(device) for res in results]
+             enumerate(res)], dim=0).to(device) for res in results]#添加label_id
         # import ipdb; ipdb.set_trace()
         if self.train_cfg is not None:
-            min_bbox_size = self.train_cfg['detection_proposal'].get('min_bbox_size', 0)
+            min_bbox_size = self.train_cfg['detection_proposal'].get('min_bbox_size', 0)#8
         else:
             min_bbox_size = self.test_cfg['detection_proposal'].get('min_bbox_size', 0)
         if min_bbox_size > 0:
             new_detections = []
-            for det in detections:
-                wh = det[:, 2:4] - det[:, 0:2]
-                valid = (wh >= min_bbox_size).all(dim=1)
-                new_detections.append(det[valid])
+            for det in detections:#遍历所有的检测box
+                wh = det[:, 2:4] - det[:, 0:2]#得到box宽度和高度
+                valid = (wh >= min_bbox_size).all(dim=1)#筛选宽度高度>min_bbox_size的
+                new_detections.append(det[valid])#保留
             detections = new_detections
 
         return detections
@@ -101,24 +103,27 @@ class MV2D(Base3DDetector):
         iou = intersect / (union + eps)
         return iou
 
+    # 根据gt对检测box进行补充： 将gt与当前检测box计算iou，对于iou较小且box比较大的gt认为此时漏检，挑选出来后和当前检测box cat到一起
     def complement_2d_gt(self, detections, gts, thr=0.35):
         # detections: [n, 6], gts: [m, 6]
         if len(gts) == 0:
             return detections
         if len(detections) == 0:
             return gts
-        iou = self.box_iou(gts, detections)
-        max_iou = iou.max(-1)[0]
-        complement_ids = max_iou < thr
-        min_bbox_size = self.train_cfg['detection_proposal'].get('min_bbox_size', 0)
+        iou = self.box_iou(gts, detections)#[len(gts), len(detections)],计算检测box与真值的iou矩阵
+        max_iou = iou.max(-1)[0]#找出iou在最后一个维度上的最大值,[0]取值[1]为最大值在最后一个维度上的index
+        complement_ids = max_iou < thr#和阈值0.4进行比较,eg:[ True,  True,  True,  True, False],表示前4个iou小于阈值，最后一个大于阈值
+        min_bbox_size = self.train_cfg['detection_proposal'].get('min_bbox_size', 0)#box最小像素size=8
         wh = gts[:, 2:4] - gts[:, 0:2]
-        valid_ids = (wh >= min_bbox_size).all(dim=1)
-        complement_gts = gts[complement_ids & valid_ids]
+        valid_ids = (wh >= min_bbox_size).all(dim=1)#筛选box wh都大于阈值的gt
+        complement_gts = gts[complement_ids & valid_ids]#对于iou比较小且box比较大的gt，此时认为漏检，把这些目标作为补偿目标，和当前的检测值cat到一起
         return torch.cat([detections, complement_gts], dim=0)
 
+    # 使用2d检测器提取特征
     def extract_feat(self, img):
         return self.base_detector.extract_feat(img)
 
+    # neck网络
     def process_detector_feat(self, detector_feat):
         if self.with_neck:
             feat = self.neck(detector_feat)
@@ -142,7 +147,7 @@ class MV2D(Base3DDetector):
         img = img.view(batch_size * num_views, *img.shape[2:])
         assert batch_size == 1, 'only support batch_size 1 now'
 
-        if self.use_grid_mask:
+        if self.use_grid_mask:#true
             img = self.grid_mask(img)
 
         # get pseudo monocular input

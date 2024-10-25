@@ -83,7 +83,7 @@ def add_frame(sample_data, e2g_t, l2e_t, l2e_r_mat, e2g_r_mat):
     return sweep_cam
 
 
-for current_id in tqdm.tqdm(range(len(key_infos['infos']))):
+for current_id in tqdm.tqdm(range(len(key_infos['infos']))):#遍历所有帧
     ###parameters of current key frame 
     e2g_t = key_infos['infos'][current_id]['ego2global_translation']
     e2g_r = key_infos['infos'][current_id]['ego2global_rotation']

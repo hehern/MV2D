@@ -32,16 +32,16 @@ class MV2DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  **kwargs):
         super(MV2DHead, self).__init__(bbox_roi_extractor=bbox_roi_extractor, bbox_head=bbox_head,
                                        train_cfg=train_cfg, test_cfg=test_cfg, **kwargs)
-        self.roi_size = bbox_roi_extractor['roi_layer']['output_size']
+        self.roi_size = bbox_roi_extractor['roi_layer']['output_size']#7
         if isinstance(self.roi_size, int):
-            self.roi_size = [self.roi_size, self.roi_size]
+            self.roi_size = [self.roi_size, self.roi_size]#[7, 7]
 
         query_generator.update(dict(loss_cls=self.bbox_head.loss_cls))
         self.query_generator = QueryGenerator(**query_generator)
         self.position_encoding = PE(**pe)
         self.box_corr_module = BoxCorrelation(**box_correlation)
 
-        self.pc_range = pc_range
+        self.pc_range = pc_range#[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
         self.intrins_feat_scale = intrins_feat_scale
         self.feat_lvl = feat_lvl
 

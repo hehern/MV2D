@@ -21,7 +21,7 @@ class MV2DTHead(MV2DSHead):
                  num_views=6,
                  **kwargs):
         super(MV2DTHead, self).__init__(**kwargs)
-        self.num_views = num_views
+        self.num_views = num_views#默认参数6
 
     def _bbox_forward_denoise(self, x, proposal_list, img_metas):
         # avoid empty 2D detection

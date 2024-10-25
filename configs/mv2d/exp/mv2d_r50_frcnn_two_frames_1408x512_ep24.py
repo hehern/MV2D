@@ -130,7 +130,7 @@ model = dict(
             nms_pre=1000,
             max_per_img=75,
             nms=dict(type='nms', iou_threshold=0.6, class_agnostic=True, ),
-            min_bbox_size=8),
+            min_bbox_size=8),#最小的2dbox长度和宽度
         rcnn=dict(
             stage_loss_weights=[0.1, 0.1, 0.1, 0.1, 0.1, 0.1],
             assigner=dict(
@@ -159,7 +159,7 @@ model = dict(
 )
 
 data = dict(
-    workers_per_gpu=4,
+    workers_per_gpu=0,
     train=dict(
         load_separate=True,
     ),
