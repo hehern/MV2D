@@ -45,6 +45,7 @@ class MV2DT(MV2D):
     gt_bboxes_2d_to_3d: 2dbox和3dbox的对应关系,即是gt_bboxes_3d中的哪个目标,保存序号 eg:[0, 2, 5, 6, 7],[],[ 1, -1,  3,  4, -1, -1],[],[ 1, -1,  3, -1, -1, -1, -1],[]
     gt_bboxes_3d: LiDARInstance3DBoxe类型的3dbox
     gt_labels_3d: 和gt_bboxes_3d对应的类别,eg:[tensor([0, 8, 0, 0, 0, 0, 7, 0], device='cuda:0')]
+    gt_bboxes_ignore: 
     """
     def forward_train(self,
                       img,   

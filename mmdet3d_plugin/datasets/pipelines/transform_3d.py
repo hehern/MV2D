@@ -561,10 +561,11 @@ class ResizeCropFlipImage(object):
 
 @PIPELINES.register_module()
 class ResizeCropFlipImageMono(ResizeCropFlipImage):
-    def __init__(self, with_bbox_2d=False, num_views=6, **kwargs):
+    def __init__(self, with_bbox_2d=False, num_views=6, with_lane=False, **kwargs):
         super(ResizeCropFlipImageMono, self).__init__(**kwargs)
         self.with_bbox_2d = with_bbox_2d
         self.num_views = num_views
+        self.with_lane = with_lane
 
     def __call__(self, results):
         imgs = results["img"]
@@ -600,7 +601,7 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
             processed_gt_bboxes_2d_to_3d = []
             processed_gt_bboxes_ignore = []
             for i in range(min(N, self.num_views)):
-                bboxes_2d = gt_bboxes_2d[i]
+                bboxes_2d = gt_bboxes_2d[i]#当前相机的2dbox
                 labels_2d = gt_labels_2d[i]
                 bboxes_2d_to_3d = gt_bboxes_2d_to_3d[i]
                 bboxes_ignore = gt_bboxes_ignore[i]
@@ -668,6 +669,49 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
             results['gt_labels_2d'] = processed_gt_labels_2d
             results['gt_bboxes_2d_to_3d'] = processed_gt_bboxes_2d_to_3d
             results['gt_bboxes_ignore'] = processed_gt_bboxes_ignore
+        
+        import ipdb; ipdb.set_trace()
+        # 把2d车道线按照数据增强矩阵进行转换,3d车道线不用管，因为数据增强矩阵已经乘到了lidar2img矩阵中
+        if self.with_lane:
+            lane_2d = results['lane_2d']
+            lane_3d = results['lane_3d']
+            # 1. resize
+            lane_2d = lane_2d * resize
+            # 2. crop and filter out-of-image bboxes
+            lane_2d[:, 0] = np.clip(lane_2d[:, 0], crop[0], crop[2])#x
+            lane_2d[:, 1] = np.clip(lane_2d[:, 1], crop[1], crop[3])#y
+            lane_2d[:, 0] = lane_2d[:, 0] - crop[0]
+            lane_2d[:, 1] = lane_2d[:, 1] - crop[1]
+            on_img = (
+                (lane_2d[..., 0] < (crop[2] - crop[0]))
+                & (lane_2d[..., 0] >= 0)
+                & (lane_2d[..., 1] < (crop[3] - crop[1]))
+                & (lane_2d[..., 1] >= 0)
+            )
+            lane_2d = lane_2d[on_img]
+            lane_3d = lane_3d[on_img]
+            # 3. flip
+            if flip:
+                flipped_lane_2d = lane_2d.copy()
+                w = crop[2] - crop[0]
+                flipped_lane_2d[..., 0] = w - lane_2d[..., 0]
+                lane_2d = flipped_lane_2d
+            # 4. rotate and filter out-of-image bboxes
+            A = self._get_rot(rotate / 180 * np.pi)
+            b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2
+            b = A.matmul(-b) + b
+            lane_2d = lane_2d @ A.numpy().T + b.numpy()[None, None]
+            on_img = (
+                (lane_2d[..., 0] < (crop[2] - crop[0]))
+                & (lane_2d[..., 0] >= 0)
+                & (lane_2d[..., 1] < (crop[3] - crop[1]))
+                & (lane_2d[..., 1] >= 0)
+            )
+            lane_2d = lane_2d[on_img]
+            lane_3d = lane_3d[on_img]
+
+            results['lane_2d'] = lane_2d
+            results['lane_3d'] = lane_3d
 
         return results
 
@@ -859,11 +903,15 @@ class GlobalRotScaleTransImage(object):
         results["gt_bboxes_3d"].rotate(
             np.array(rot_angle)
         )
+        if 'lane_3d' in results:
+            # 把车道线也进行旋转
 
         # random scale
         scale_ratio = np.random.uniform(*self.scale_ratio_range)
         self.scale_xyz(results, scale_ratio)
         results["gt_bboxes_3d"].scale(scale_ratio)
+        if 'lane_3d' in results:
+            # 把车道线也进行尺度变换
 
         # TODO: support translation
 

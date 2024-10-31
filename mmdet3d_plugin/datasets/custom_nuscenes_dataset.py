@@ -30,7 +30,7 @@ class CustomNuScenesDataset(NuScenesDataset):
     This dataset add camera intrinsics and extrinsics and 2d bbox to the results.
     """
     def __init__(self, ann_file_2d, load_separate=False, **kwargs):
-        self.load_separate = load_separate
+        self.load_separate = load_separate#False
         self.ann_file_2d = ann_file_2d
         super(CustomNuScenesDataset, self).__init__(**kwargs)
         self.load_annotations_2d(ann_file_2d)
@@ -42,7 +42,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         data = mmcv.load(ann_file, file_format='pkl')
         data_infos_ori = data_infos = list(sorted(data['infos'], key=lambda e: e['timestamp']))
         data_infos = data_infos[::self.load_interval]
-        self.metadata = data['metadata']
+        self.metadata = data['metadata']#这里是啥？？？其实没啥用
         self.version = self.metadata['version']
 
         if self.load_separate:
@@ -133,7 +133,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         intrinsics = []
         extrinsics = []
         img_timestamp = []
-        for cam_type, cam_info in info['cams'].items():
+        for cam_type, cam_info in info['cams'].items():#遍历6个相机
             img_timestamp.append(cam_info['timestamp'] / 1e6)
             image_paths.append(cam_info['data_path'])
             # obtain lidar to image transformation matrix
@@ -177,7 +177,7 @@ class CustomNuScenesDataset(NuScenesDataset):
                 ann_2d = self.impath_to_ann2d(image_paths[cam_i])
                 labels_2d = ann_2d['labels']
                 bboxes_2d = ann_2d['bboxes_2d']
-                bboxes_ignore = ann_2d['gt_bboxes_ignore']
+                bboxes_ignore = ann_2d['gt_bboxes_ignore']#这个字段存的是啥？？？
                 bboxes_cam = ann_2d['bboxes_cam']
                 lidar2cam = extrinsics[cam_i].T
 
@@ -197,11 +197,11 @@ class CustomNuScenesDataset(NuScenesDataset):
             annos['gt_bboxes_2d_to_3d'] = gt_bboxes_2d_to_3d
             annos['gt_bboxes_ignore'] = gt_bboxes_ignore
         
-        """
-        input_dict: {
+        if 'lane_3d' in info:
+            input_dict['lane_3d'] = info['lane_3d']
+        if 'lane_2d' in info:
+            input_dict['lane_2d'] = info['lane_2d']
 
-        }
-        """
         return input_dict
 
     def center_match(self, bboxes_a, bboxes_b):

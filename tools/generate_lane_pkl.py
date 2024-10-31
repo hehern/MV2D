@@ -61,7 +61,7 @@ def draw_2d_points_to_image(img, points_2d, sample_token):
     for (x, y) in points_2d:
         draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
     
-    save_path = 'viz/lane/' + sample_token + '_lane.jpg'  # 替换为你想要保存的路径和文件名  
+    save_path = 'viz/lane_50/' + sample_token + '_lane.jpg'  # 替换为你想要保存的路径和文件名  
     img.save(save_path) 
 
 def filter_lane_by_dis(map_lane, info, lane_ego_dis):
@@ -72,7 +72,9 @@ def filter_lane_by_dis(map_lane, info, lane_ego_dis):
         distances = torch.norm(global_cor - ego_pose, dim=1)
         if (distances < lane_ego_dis).any().item():
             nearby_map_lane.append(global_cor)
-    return torch.cat(nearby_map_lane, dim=0)
+
+    return torch.tensor([]) if len(nearby_map_lane) == 0 else torch.cat(nearby_map_lane, dim=0)
+
 
 def project_lane_to_img(img, map_lane, info, sample_token):
 
@@ -106,8 +108,13 @@ def project_lane_to_img(img, map_lane, info, sample_token):
     global2image_tensor = torch.tensor(global2image)
 
     # 筛选自车周围100m内的map_lane
-    lane_ego_dis = 100.0
-    global_cor = filter_lane_by_dis(map_lane, info, lane_ego_dis)
+    lane_ego_dis = 50.0#这里后期可以优化为左右10m以内，前向50m以内的点,后面的不要
+    global_cor = filter_lane_by_dis(map_lane, info, lane_ego_dis)#global_cor是世界坐标系，最好后期转换为lidar坐标系，因为gt_bboxes_3d是lidar坐标系
+    if global_cor.numel() == 0:
+        return (torch.tensor([]), torch.tensor([]))
+
+    # add z添加Z坐标
+    # add_z()
 
     # project
     points_2d = []
@@ -142,20 +149,12 @@ def project_lane_to_img(img, map_lane, info, sample_token):
     draw_points_2d = draw_points_2d[on_img & depth_mask]
     global_cor = global_cor[on_img & depth_mask]
 
-    if len(draw_points_2d) != 0:
-        draw_2d_points_to_image(img, draw_points_2d, sample_token)
-    else:
-        print("no lane on this img: ", sample_token)
+    # if len(draw_points_2d) != 0:
+    #     draw_2d_points_to_image(img, draw_points_2d, sample_token)
+    # else:
+    #     print("no lane on this img: ", sample_token)
     # import ipdb; ipdb.set_trace()
     return (global_cor, draw_points_2d)
-
-def filter_gt_by_cam_front(info):
-    #info['gt_boxes']lidar坐标系，x_size, y_size, z_size, l, w, h, yaw
-    #字段转换为8个角点坐标，依次投影到前向图片上,只要有一个角点在图片上就保留该标注
-    gt_bboxes_3d = info["gt_boxes"]
-    gt_bboxes_3d = LiDARInstance3DBoxes(
-        gt_bboxes_3d, box_dim=gt_bboxes_3d.shape[-1], origin=(0.5, 0.5, 0.5)
-    ).convert_to(Box3DMode.LIDAR)
 
 def filter_pkl(info):
     # 1.删除无效字段
@@ -184,15 +183,6 @@ def filter_pkl(info):
     # 4.将能投影到当前图片上的车道线点保存在lane字段中
     info['lane_3d'] = lane_3d #global坐标系下，需要再次转换到ego坐标系下
     info['lane_2d'] = lane_2d #前向图片坐标系下
-
-    # 5.标注框过滤：只保留前向图片上的标注
-    import ipdb; ipdb.set_trace()
-    filter_gt_by_cam_front(info)
-
-    # 6.添加2D标注框
-
-    # info['num_lidar_pts'] = info['num_lidar_pts'][valid_mask]
-    # info['gt_names'] = np.array(gt_names, dtype=str)[valid_mask]
 
     return True
 
