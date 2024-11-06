@@ -673,45 +673,51 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
         import ipdb; ipdb.set_trace()
         # 把2d车道线按照数据增强矩阵进行转换,3d车道线不用管，因为数据增强矩阵已经乘到了lidar2img矩阵中
         if self.with_lane:
-            lane_2d = results['lane_2d']
-            lane_3d = results['lane_3d']
-            # 1. resize
-            lane_2d = lane_2d * resize
-            # 2. crop and filter out-of-image bboxes
-            lane_2d[:, 0] = np.clip(lane_2d[:, 0], crop[0], crop[2])#x
-            lane_2d[:, 1] = np.clip(lane_2d[:, 1], crop[1], crop[3])#y
-            lane_2d[:, 0] = lane_2d[:, 0] - crop[0]
-            lane_2d[:, 1] = lane_2d[:, 1] - crop[1]
-            on_img = (
-                (lane_2d[..., 0] < (crop[2] - crop[0]))
-                & (lane_2d[..., 0] >= 0)
-                & (lane_2d[..., 1] < (crop[3] - crop[1]))
-                & (lane_2d[..., 1] >= 0)
-            )
-            lane_2d = lane_2d[on_img]
-            lane_3d = lane_3d[on_img]
-            # 3. flip
-            if flip:
-                flipped_lane_2d = lane_2d.copy()
-                w = crop[2] - crop[0]
-                flipped_lane_2d[..., 0] = w - lane_2d[..., 0]
-                lane_2d = flipped_lane_2d
-            # 4. rotate and filter out-of-image bboxes
-            A = self._get_rot(rotate / 180 * np.pi)
-            b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2
-            b = A.matmul(-b) + b
-            lane_2d = lane_2d @ A.numpy().T + b.numpy()[None, None]
-            on_img = (
-                (lane_2d[..., 0] < (crop[2] - crop[0]))
-                & (lane_2d[..., 0] >= 0)
-                & (lane_2d[..., 1] < (crop[3] - crop[1]))
-                & (lane_2d[..., 1] >= 0)
-            )
-            lane_2d = lane_2d[on_img]
-            lane_3d = lane_3d[on_img]
+            assert len(results['lane_2d']) == len(results['lane_3d'])#list[Tensor]
+            list_lane_2d = []
+            list_lane_3d = []
+            for i in range(len(results['lane_2d'])):
+                lane_2d = results['lane_2d'][i]
+                lane_3d = results['lane_3d'][i]
+                # 1. resize
+                lane_2d = lane_2d * resize
+                # 2. crop and filter out-of-image bboxes
+                lane_2d[:, 0] = np.clip(lane_2d[:, 0], crop[0], crop[2])#x
+                lane_2d[:, 1] = np.clip(lane_2d[:, 1], crop[1], crop[3])#y
+                lane_2d[:, 0] = lane_2d[:, 0] - crop[0]
+                lane_2d[:, 1] = lane_2d[:, 1] - crop[1]
+                on_img = (
+                    (lane_2d[..., 0] < (crop[2] - crop[0]))
+                    & (lane_2d[..., 0] >= 0)
+                    & (lane_2d[..., 1] < (crop[3] - crop[1]))
+                    & (lane_2d[..., 1] >= 0)
+                )
+                lane_2d = lane_2d[on_img]
+                lane_3d = lane_3d[on_img]
+                # 3. flip
+                if flip:
+                    flipped_lane_2d = lane_2d.copy()
+                    w = crop[2] - crop[0]
+                    flipped_lane_2d[..., 0] = w - lane_2d[..., 0]
+                    lane_2d = flipped_lane_2d
+                # 4. rotate and filter out-of-image bboxes
+                A = self._get_rot(rotate / 180 * np.pi)
+                b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2
+                b = A.matmul(-b) + b
+                lane_2d = lane_2d @ A.numpy().T + b.numpy()[None, None]
+                on_img = (
+                    (lane_2d[..., 0] < (crop[2] - crop[0]))
+                    & (lane_2d[..., 0] >= 0)
+                    & (lane_2d[..., 1] < (crop[3] - crop[1]))
+                    & (lane_2d[..., 1] >= 0)
+                )
+                lane_2d = lane_2d[on_img]
+                lane_3d = lane_3d[on_img]
+                list_lane_2d.append(lane_2d)
+                list_lane_3d.append(lane_3d)
 
-            results['lane_2d'] = lane_2d
-            results['lane_3d'] = lane_3d
+            results['lane_2d'] = list_lane_2d
+            results['lane_3d'] = list_lane_3d
 
         return results
 
@@ -883,7 +889,7 @@ class GlobalRotScaleTransImage(object):
         self.scale_ratio_range = scale_ratio_range
         self.translation_std = translation_std
 
-        self.reverse_angle = reverse_angle
+        self.reverse_angle = reverse_angle#True
         self.training = training
 
     def __call__(self, results):
@@ -905,6 +911,20 @@ class GlobalRotScaleTransImage(object):
         )
         if 'lane_3d' in results:
             # 把车道线也进行旋转
+            rot_sin = torch.sin(rot_angle)
+            rot_cos = torch.cos(rot_angle)
+            ones = torch.ones_like(rot_cos)
+            zeros = torch.zeros_like(rot_cos)
+            rot_mat_T = torch.stack([
+                torch.stack([ones, zeros, zeros]),
+                torch.stack([zeros, rot_cos, rot_sin]),
+                torch.stack([zeros, -rot_sin, rot_cos])
+            ])
+            list_lane_3d = []
+            for lane_3d in results['lane_3d']:
+                lane_3d = lane_3d @ rot_mat_T
+                list_lane_3d.append(lane_3d)
+            results['lane_3d'] = list_lane_3d
 
         # random scale
         scale_ratio = np.random.uniform(*self.scale_ratio_range)
@@ -912,6 +932,11 @@ class GlobalRotScaleTransImage(object):
         results["gt_bboxes_3d"].scale(scale_ratio)
         if 'lane_3d' in results:
             # 把车道线也进行尺度变换
+            list_lane_3d = []
+            for lane_3d in results['lane_3d']:
+                lane_3d *= scale_ratio
+                list_lane_3d.append(lane_3d)
+            results['lane_3d'] = list_lane_3d
 
         # TODO: support translation
 

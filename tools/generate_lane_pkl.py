@@ -26,7 +26,7 @@ from PIL import Image, ImageDraw
 from pyquaternion import Quaternion
 
 from mmdet3d.core.bbox import Box3DMode, LiDARInstance3DBoxes
-# from tools.data_converter.pick_data import get_pointnums
+from visualize import *
 
 dataroot = './data/nuscenes'
 info_prefix = 'train'
@@ -54,27 +54,74 @@ map_locations = {
     'boston-seaport': list()
     }
 
-def draw_2d_points_to_image(img, points_2d, sample_token):
+class_names = [
+    'car', 'truck', 'trailer', 'bus', 'construction_vehicle', 'bicycle',
+    'motorcycle', 'pedestrian', 'traffic_cone', 'barrier'
+]
+# point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]#xyz的顺序，目前lidar frame是右前天的顺序
+point_cloud_range = [-20.0, 0.0, -5.0, 20.0, 60.0, 3.0]#xyz的顺序，目前lidar frame是右前天的顺序
+
+def draw_2d_points_to_image(img, info):
+    sample_token = info['token']
+
+    # 前向图片绘制车道线投影
     draw = ImageDraw.Draw(img)  
     point_color = (255, 0, 0)
     
-    for (x, y) in points_2d:
-        draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
+    for points_2d in info['lane_2d']:
+        for (x, y) in points_2d:
+            draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
+
+    # 前向图片绘制3dbox投影
+    image = np.array(img)
+    bboxes = info['gt_boxes']
+    bboxes[..., 2] -= bboxes[..., 5] / 2
+    bboxes = LiDARInstance3DBoxes(bboxes, box_dim=7)
+    gt_labels_3d = []
+    for cat in info['gt_names']:
+        if cat in class_names:
+            gt_labels_3d.append(class_names.index(cat))
+        else:
+            gt_labels_3d.append(-1)
+    gt_labels_3d = np.array(gt_labels_3d)
+    visualize_camera(
+        os.path.join("viz/camera_front", f"{sample_token}.png"),
+        image,
+        bboxes=bboxes,
+        labels=gt_labels_3d,
+        transform=info['cams']['CAM_FRONT']['lidar2image'],
+        classes=class_names,
+    )
     
-    save_path = 'viz/lane_50/' + sample_token + '_lane.jpg'  # 替换为你想要保存的路径和文件名  
-    img.save(save_path) 
+    # 激光点云bev图绘制3dbox（lidar frame)、车道线
+    lidar = np.fromfile(info['lidar_path'], dtype=np.float32)
+    lidar = lidar.reshape(-1, 5)
+    visualize_lidar(
+        os.path.join("viz/lidar", f"{sample_token}.png"),
+        lidar,
+        bboxes=bboxes,
+        points=info['lane_3d'],
+        labels=gt_labels_3d,
+        xlim=[point_cloud_range[d] for d in [0, 3]],
+        ylim=[point_cloud_range[d] for d in [1, 4]],
+        classes=class_names,
+    )
 
-def filter_lane_by_dis(map_lane, info, lane_ego_dis):
-    nearby_map_lane = []
-    ego_pose = torch.tensor([info["ego2global_translation"][0], info["ego2global_translation"][1]])
-    for polygon in map_lane:
-        global_cor = torch.tensor(polygon["points"])
-        distances = torch.norm(global_cor - ego_pose, dim=1)
-        if (distances < lane_ego_dis).any().item():
-            nearby_map_lane.append(global_cor)
+    # import ipdb; ipdb.set_trace()
 
-    return torch.tensor([]) if len(nearby_map_lane) == 0 else torch.cat(nearby_map_lane, dim=0)
 
+def filter_lane_by_dis(global_cor, lane_lidar_dis):
+    on_fov = (
+        (global_cor[0] < lane_lidar_dis[1])
+        & (global_cor[0] >= lane_lidar_dis[0])
+        & (global_cor[1] < lane_lidar_dis[3])
+        & (global_cor[1] >= lane_lidar_dis[2])
+    )#shape:n
+    # if on_fov.any():
+    #     import ipdb; ipdb.set_trace()
+    global_cor = global_cor[:, on_fov]
+    
+    return global_cor
 
 def project_lane_to_img(img, map_lane, info, sample_token):
 
@@ -107,54 +154,84 @@ def project_lane_to_img(img, map_lane, info, sample_token):
     info["global2image"] = global2image
     global2image_tensor = torch.tensor(global2image)
 
-    # 筛选自车周围100m内的map_lane
-    lane_ego_dis = 50.0#这里后期可以优化为左右10m以内，前向50m以内的点,后面的不要
-    global_cor = filter_lane_by_dis(map_lane, info, lane_ego_dis)#global_cor是世界坐标系，最好后期转换为lidar坐标系，因为gt_bboxes_3d是lidar坐标系
-    if global_cor.numel() == 0:
-        return (torch.tensor([]), torch.tensor([]))
+    # camera to lidar
+    camera2lidar_rt = np.eye(4).astype(np.float32)
+    camera2lidar_rt[:3, :3] = info["sensor2lidar_rotation"].T
+    camera2lidar_rt[3, :3] = info["sensor2lidar_translation"]
+    info["camera2lidar"] = camera2lidar_rt.T
 
-    # add z添加Z坐标
-    # add_z()
+    # global to lidar transform
+    global2lidar = camera2lidar_rt.T @ ego2camera_rt.T @ global2ego_rt.T
+    info["global2lidar"] = global2lidar
+    global2lidar_tensor = torch.tensor(global2lidar)
 
-    # project
-    points_2d = []
-    width, height = img.size
-
-    zero_tensor = torch.zeros(global_cor.shape[0], 1)
-    global_cor_3d = torch.cat((global_cor, zero_tensor), dim=1).transpose(1, 0)#(3,n)
-    cur_coords = global2image_tensor[:3, :3].matmul(global_cor_3d)
-    cur_coords += global2image_tensor[:3, 3].reshape(3, 1)# torch.Size([1, 3, n]),将点云转换到图片坐标系
-
-    # get 2d coords
-    dist = cur_coords[2, :]
-    cur_coords[2, :] = torch.clamp(cur_coords[2, :], 1e-5, 1e5)
-    cur_coords[:2, :] /= cur_coords[2:3, :]
-
-    draw_points_2d = cur_coords[:2, :].transpose(1, 0)#(n,2)
-    depth = cur_coords[2:3, :].transpose(1, 0)
-
-    draw_points_2d[np.isnan(draw_points_2d)] = 0
-    del_xindx, del_yindx = np.where(draw_points_2d[:, :] == 0)
-    draw_points_2d = np.delete(draw_points_2d, del_xindx, axis=0)
-    depth = np.delete(depth, del_xindx, axis=0)
-    global_cor = np.delete(global_cor, del_xindx, axis=0)
-    on_img = (
-        (draw_points_2d[..., 0] < width)
-        & (draw_points_2d[..., 0] >= 0)
-        & (draw_points_2d[..., 1] < height)
-        & (draw_points_2d[..., 1] >= 0)
+    # lidar to camera
+    lidar2camera_r = np.linalg.inv(camera2lidar_rt.T[:3, :3])
+    lidar2camera_t = (
+        camera2lidar_rt[3, :3] @ lidar2camera_r.T
     )
+    lidar2camera_rt = np.eye(4).astype(np.float32)
+    lidar2camera_rt[:3, :3] = lidar2camera_r.T
+    lidar2camera_rt[3, :3] = -lidar2camera_t
+    info["lidar2camera"] = lidar2camera_rt.T
 
-    depth_mask = ((depth > 0) & (depth < lane_ego_dis)).squeeze()
-    draw_points_2d = draw_points_2d[on_img & depth_mask]
-    global_cor = global_cor[on_img & depth_mask]
+    # lidar 2 image
+    lidar2image = camera_intrinsics @ lidar2camera_rt.T
+    info["lidar2image"] = lidar2image
+    lidar2image_tensor = torch.tensor(lidar2image)
 
-    # if len(draw_points_2d) != 0:
-    #     draw_2d_points_to_image(img, draw_points_2d, sample_token)
-    # else:
-    #     print("no lane on this img: ", sample_token)
-    # import ipdb; ipdb.set_trace()
-    return (global_cor, draw_points_2d)
+    # 将车道线转换到lidar坐标系
+    list_lidar_frame_lane = []
+    for polygon in map_lane:
+        global_cor = torch.tensor(polygon["points"])
+        zero_tensor = torch.zeros(global_cor.shape[0], 1)
+        global_cor_3d = torch.cat((global_cor, zero_tensor), dim=1).transpose(1, 0)#(3,n)
+        lidar_frame_coords = global2lidar_tensor[:3, :3].matmul(global_cor_3d)
+        lidar_frame_coords += global2lidar_tensor[:3, 3].reshape(3, 1)# torch.Size([3, n]),将点云转换到lidar坐标系
+        list_lidar_frame_lane.append(lidar_frame_coords)
+
+    lane_3d = []
+    lane_2d = []
+    for global_cor in list_lidar_frame_lane:
+        # 筛选lidar周围内的map_lane,注意lidar_frame是右前天
+        lane_lidar_dis = [-20.0, 20.0, 0, 60.0]
+        global_cor = filter_lane_by_dis(global_cor, lane_lidar_dis)#global_cor是lidar坐标系，和gt_bboxes_3d是一个坐标系下
+        if global_cor.numel() == 0:
+            continue
+
+        # add z添加Z坐标
+        # add_z()
+
+        # project
+        points_2d = []
+        width, height = img.size
+
+        cur_coords = lidar2image_tensor[:3, :3].matmul(global_cor)
+        cur_coords += lidar2image_tensor[:3, 3].reshape(3, 1)# torch.Size([3, n]),将点云转换到图片坐标系
+
+        # get 2d coords
+        dist = cur_coords[2, :]
+        cur_coords[2, :] = torch.clamp(cur_coords[2, :], 1e-5, 1e5)
+        cur_coords[:2, :] /= cur_coords[2:3, :]
+
+        draw_points_2d = cur_coords[:2, :].transpose(1, 0)#(n,2)
+        depth = cur_coords[2:3, :].transpose(1, 0)
+
+        on_img = (
+            (draw_points_2d[..., 0] < width)
+            & (draw_points_2d[..., 0] >= 0)
+            & (draw_points_2d[..., 1] < height)
+            & (draw_points_2d[..., 1] >= 0)
+        )
+
+        depth_mask = (depth > 0).squeeze()
+        draw_points_2d = draw_points_2d[on_img & depth_mask]
+        global_cor = global_cor.transpose(1, 0)[on_img & depth_mask]
+
+        lane_3d.append(global_cor)
+        lane_2d.append(draw_points_2d)
+
+    return (lane_3d, lane_2d)
 
 def filter_pkl(info):
     # 1.删除无效字段
@@ -178,11 +255,14 @@ def filter_pkl(info):
     # 3.将车道线点投影到前向图片上
     img = Image.open(info['cams']['CAM_FRONT']['data_path'])
     # img.save('viz/lane/'+sample_token+'.jpg')
-    lane_3d, lane_2d = project_lane_to_img(img, map_lane, info['cams']['CAM_FRONT'], sample_token)
+    lane_3d, lane_2d = project_lane_to_img(img, map_lane, info['cams']['CAM_FRONT'], sample_token)#返回list[tensor]
 
     # 4.将能投影到当前图片上的车道线点保存在lane字段中
-    info['lane_3d'] = lane_3d #global坐标系下，需要再次转换到ego坐标系下
+    info['lane_3d'] = lane_3d #lidar坐标系下
     info['lane_2d'] = lane_2d #前向图片坐标系下
+
+    draw_2d_points_to_image(img, info)
+    # import ipdb; ipdb.set_trace()
 
     return True
 
