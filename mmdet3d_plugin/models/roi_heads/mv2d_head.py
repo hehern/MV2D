@@ -189,7 +189,7 @@ class MV2DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         """Run forward function and calculate loss for box head in training."""
 
         bbox_results = self._bbox_forward(x, proposal_list, img_metas)
-        bbox_results.update(pred={'cls_scores': bbox_results['cls_scores'], 'bbox_preds': bbox_results['bbox_preds']})
+        bbox_results.update(pred={'cls_scores': bbox_results['cls_scores'], 'bbox_preds': bbox_results['bbox_preds']})#添加一个pred字段,这个操作有点迷惑
 
         return bbox_results
 

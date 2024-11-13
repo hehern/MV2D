@@ -10,4 +10,5 @@
 from .mv2d import MV2D
 from .mv2d_t import MV2DT
 from .wrap_detector import *
-__all__ = ['MV2D', 'MV2DT']
+from .lane3d import LANE3D
+__all__ = ['MV2D', 'MV2DT', 'LANE3D']

@@ -25,21 +25,22 @@ class MV2DTHead(MV2DSHead):
 
     def _bbox_forward_denoise(self, x, proposal_list, img_metas):
         # avoid empty 2D detection
-        if sum([len(p) for p in proposal_list]) == 0:
+        if sum([len(p) for p in proposal_list]) == 0:#2D检测框为0的情况下
             proposal = torch.tensor([[0, 50, 50, 100, 100, 0]], dtype=proposal_list[0].dtype,
                                     device=proposal_list[0].device)
-            proposal_list = [proposal] + proposal_list[1:]
+            proposal_list = [proposal] + proposal_list[1:]#填充假的
 
-        rois = bbox2roi(proposal_list)
+        rois = bbox2roi(proposal_list)#给每个框的编码前加一个所属的图片索引,变成5维的向量，最后把所有的cat一下，变成(n,5)的tensor
         intrinsics, extrinsics = self.get_box_params(proposal_list,
                                                      [img_meta['intrinsics'] for img_meta in img_metas],
                                                      [img_meta['extrinsics'] for img_meta in img_metas])
+        # 把不同size的候选框从原图上映射到选中的feature map上，然后转化为设定好的等长向量(譬如7x7),x0[[12, 512, 32, 88]],eg:bbox_feats[40, 512, 7, 7]
         bbox_feats = self.bbox_roi_extractor(
             x[:self.bbox_roi_extractor.num_inputs], rois)
 
         # 3dpe was concatenated to fpn feature
-        c = bbox_feats.size(1)
-        bbox_feats, _ = bbox_feats.split([c // 2, c // 2], dim=1)
+        c = bbox_feats.size(1)#特征维度:512
+        bbox_feats, _ = bbox_feats.split([c // 2, c // 2], dim=1)#只要前256维度特征，即只要图像特征，不要pe
 
         # intrinsics as extra input feature
         extra_feats = dict(
@@ -106,13 +107,13 @@ class MV2DTHead(MV2DSHead):
                                                         pe[None],
                                                         attn_mask=attn_mask,
                                                         cross_attn_mask=cross_attn_mask,
-                                                        force_fp32=self.force_fp32, )
+                                                        force_fp32=self.force_fp32, )#all_cls_scores:[6, 1, 120, 10],all_bbox_preds:[6, 1, 120, 10]
 
         if mask_dict and mask_dict['pad_size'] > 0:
-            output_known_class = all_cls_scores[:, :, :mask_dict['pad_size'], :]
-            output_known_coord = all_bbox_preds[:, :, :mask_dict['pad_size'], :]
-            mask_dict['output_known_lbs_bboxes'] = (output_known_class, output_known_coord)
-            all_cls_scores = all_cls_scores[:, :, mask_dict['pad_size']:, :]
+            output_known_class = all_cls_scores[:, :, :mask_dict['pad_size'], :]#[6, 1, 80, 10]
+            output_known_coord = all_bbox_preds[:, :, :mask_dict['pad_size'], :]#[6, 1, 80, 10]
+            mask_dict['output_known_lbs_bboxes'] = (output_known_class, output_known_coord)#mask_dict.keys()=['known_indice', 'batch_idx', 'map_known_indice', 'known_lbs_bboxes', 'know_idx', 'pad_size', 'output_known_lbs_bboxes']
+            all_cls_scores = all_cls_scores[:, :, mask_dict['pad_size']:, :]#[6, 1, 40, 10]
             all_bbox_preds = all_bbox_preds[:, :, mask_dict['pad_size']:, :]
 
         cls_scores, bbox_preds = [], []
@@ -128,15 +129,15 @@ class MV2DTHead(MV2DSHead):
         return bbox_results
 
     def _bbox_forward(self, x, proposal_list, img_metas):
-        time_stamp = np.array([img_meta['timestamp'] for img_meta in img_metas])
-        mean_time_stamp = time_stamp[self.num_views:].mean() - time_stamp[:self.num_views].mean()
+        time_stamp = np.array([img_meta['timestamp'] for img_meta in img_metas])#12个时间戳
+        mean_time_stamp = time_stamp[self.num_views:].mean() - time_stamp[:self.num_views].mean()#前一帧的6张图片的时间戳均值-当前帧的6张图片时间戳均值,约为0.5
 
         bbox_results = self._bbox_forward_denoise(x, proposal_list, img_metas)
 
-        if len(img_metas) > self.num_views:
-            bbox_preds = bbox_results['bbox_preds']
+        if len(img_metas) > self.num_views:#12>6
+            bbox_preds = bbox_results['bbox_preds']#预测box
             bbox_preds_with_time = [
-                torch.cat([pred[..., :8], pred[..., 8:] / mean_time_stamp], dim=-1) for pred in bbox_preds]
-            bbox_results['bbox_preds'] = bbox_preds_with_time
+                torch.cat([pred[..., :8], pred[..., 8:] / mean_time_stamp], dim=-1) for pred in bbox_preds]#这是在干啥？
+            bbox_results['bbox_preds'] = bbox_preds_with_time#把处理过的新预测box填充回对应字段
 
         return bbox_results

@@ -39,6 +39,18 @@ model = dict(
     ),
     roi_head=dict(
         type='LANE3DHead',
+        pc_range=point_cloud_range,
+        force_fp32=True,
+        use_denoise=True,
+        neg_bbox_loss=True,
+        denoise_noise_scale=1.25,
+        denoise_split=0.6,
+
+        bbox_roi_extractor=dict(
+            type='SingleRoIExtractor',
+            roi_layer=dict(type='RoIAlign', output_size=roi_size, sampling_ratio=-1),
+            featmap_strides=roi_srides,
+            out_channels=512, ),
     ),
     train_cfg=dict(
         complement_2d_gt=0.4,

@@ -28,7 +28,7 @@ class MV2DSHead(MV2DHead):
                  denoise_split=0.75,
                  **kwargs):
         super(MV2DSHead, self).__init__(**kwargs)
-        self.use_denoise = use_denoise
+        self.use_denoise = use_denoise#True
         self.neg_bbox_loss = neg_bbox_loss
         self.denoise_scalar = denoise_scalar
         self.denoise_noise_scale = denoise_noise_scale
@@ -234,13 +234,13 @@ class MV2DSHead(MV2DHead):
 
     def forward_train(self,
                       x,            #图像特征,tuple(torch.Tensor),feat[0].shape=[12, 256, 32, 88]
-                      img_metas,    #原始数据信息
+                      img_metas,    #原始数据信息len(img_metas)=12,['num_views', 'filename', 'ori_shape', 'img_shape', 'lidar2img', 'pad_shape', 'scale_factor', 'box_mode_3d', 'box_type_3d', 'img_norm_cfg', 'sample_idx', 'pts_filename', 'intrinsics', 'extrinsics', 'timestamp']
                       proposal_list,#2d pred
                       gt_bboxes,    #2d gt-按照图片存放
                       gt_labels,    #2d gt label
                       gt_bboxes_3d, #3d gt
                       gt_labels_3d, #3d gt label
-                      ori_gt_bboxes_3d,#3d gt 当前帧视角下所有的
+                      ori_gt_bboxes_3d,#3d gt 当前帧所有3dbox
                       ori_gt_labels_3d,
                       attr_labels,
                       gt_bboxes_ignore=None,
@@ -248,12 +248,11 @@ class MV2DSHead(MV2DHead):
                       **kwargs):
         assert len(img_metas) // img_metas[0]['num_views'] == 1#//向下取整
 
-        import ipdb; ipdb.set_trace()
-        num_imgs = len(img_metas)
+        num_imgs = len(img_metas)#12
 
-        proposal_boxes = []
-        proposal_scores = []
-        proposal_classes = []
+        proposal_boxes = []#每张图片上的2dbox
+        proposal_scores = []#score
+        proposal_classes = []#label(数字)
         for i in range(num_imgs):
             proposal_boxes.append(proposal_list[i][:, :6])
             proposal_scores.append(proposal_list[i][:, 4])
@@ -261,20 +260,21 @@ class MV2DSHead(MV2DHead):
 
         # position encoding
         pos_enc = self.position_encoding(x, img_metas)
-        x = [torch.cat([feat, pe], dim=1) for feat, pe in zip(x, pos_enc)]
+        x = [torch.cat([feat, pe], dim=1) for feat, pe in zip(x, pos_enc)]#把图像特征和位置编码cat起来,list[Tensor[12, 512, 32, 88]]
 
         losses = dict()
 
-        if self.use_denoise:
-            img_metas[0]['gt_bboxes_3d'] = ori_gt_bboxes_3d[0]
+        if self.use_denoise:#True
+            img_metas[0]['gt_bboxes_3d'] = ori_gt_bboxes_3d[0]#把当前帧所有的gt box保存在img_metas[0]的对应字段下面
             img_metas[0]['gt_labels_3d'] = ori_gt_labels_3d[0]
 
-        results_from_last = self._bbox_forward_train(x, proposal_boxes, img_metas)
-        preds = results_from_last['pred']
+        results_from_last = self._bbox_forward_train(x, proposal_boxes, img_metas)#?
+        import ipdb; ipdb.set_trace()
+        preds = results_from_last['pred']#没有这个key啊？
 
         cls_scores = preds['cls_scores']
         bbox_preds = preds['bbox_preds']
-        loss_weights = copy.deepcopy(self.stage_loss_weights)
+        loss_weights = copy.deepcopy(self.stage_loss_weights)#[0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
 
         # use the matching results from last stage for loss calculation
         loss_stage = []
