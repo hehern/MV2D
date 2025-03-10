@@ -23,7 +23,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                  train_cfg=None,
                  test_cfg=None,
                  **kwargs):
-        super(MV2DHead, self).__init__(bbox_roi_extractor=bbox_roi_extractor, bbox_head=bbox_head,
+        super(LANE3DHead, self).__init__(bbox_roi_extractor=bbox_roi_extractor, bbox_head=bbox_head,
                                        train_cfg=train_cfg, test_cfg=test_cfg, **kwargs)
         self.roi_size = bbox_roi_extractor['roi_layer']['output_size']#7
         if isinstance(self.roi_size, int):
@@ -32,6 +32,19 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         self.pc_range = pc_range#[-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
         self.stage_loss_weights = train_cfg.get('stage_loss_weights') if train_cfg else None
         self.force_fp32 = force_fp32
+
+    def init_assigner_sampler(self):
+        self.bbox_assigner = None
+        self.bbox_sampler = None
+
+    def init_bbox_head(self, bbox_roi_extractor, bbox_head):
+        """Initialize ``bbox_head``"""
+        self.bbox_roi_extractor = build_roi_extractor(bbox_roi_extractor)
+        bbox_head.update(dict(train_cfg=self.train_cfg, test_cfg=self.test_cfg))
+        self.bbox_head = build_head(bbox_head)
+
+    def init_mask_head(self, mask_roi_extractor, mask_head):
+        raise NotImplementedError
 
     def forward_train(self,
                       x,

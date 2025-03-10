@@ -197,6 +197,17 @@ class NormalizeMultiviewImage(object):
             img, self.mean, self.std, self.to_rgb) for img in results['img']]
         results['img_norm_cfg'] = dict(
             mean=self.mean, std=self.std, to_rgb=self.to_rgb)
+
+        # import os
+        # from tools.visualize import visualize_camera
+        # sample_token = results['sample_idx']
+        # visualize_camera(
+        #     os.path.join("viz/camera_front_aug_after_NormalizeMultiviewImage", f"{sample_token}.png"),
+        #     mmcv.imdenormalize(
+        #         results['img'][0], self.mean, self.std),
+        # )
+        # import ipdb; ipdb.set_trace()
+
         return results
 
     def __repr__(self):
@@ -568,7 +579,16 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
         self.with_lane = with_lane
 
     def __call__(self, results):
-        imgs = results["img"]
+        # import os
+        # from tools.visualize import visualize_camera
+        # sample_token = results['sample_idx']
+        # visualize_camera(
+        #     os.path.join("viz/camera_front_aug_before_ResizeCropFlipImageMono", f"{sample_token}.png"),
+        #     results['img'][0],
+        # )
+
+
+        imgs = results["img"]#hwc:900, 1600, 3,顺序为bgr
         N = len(imgs)
         new_imgs = []
         resize, resize_dims, crop, flip, rotate = self._sample_augmentation()
@@ -590,6 +610,14 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
         results["img"] = new_imgs
         results['lidar2img'] = [results['intrinsics'][i] @ results['extrinsics'][i].T for i in
                                 range(len(results['extrinsics']))]
+        
+        # import os
+        # from tools.visualize import visualize_camera
+        # sample_token = results['sample_idx']
+        # visualize_camera(
+        #     os.path.join("viz/camera_front_aug_after_ResizeCropFlipImageMono", f"{sample_token}.png"),
+        #     results['img'][0],
+        # )
 
         if self.with_bbox_2d:
             gt_bboxes_2d = results['gt_bboxes_2d']
@@ -670,7 +698,7 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
             results['gt_bboxes_2d_to_3d'] = processed_gt_bboxes_2d_to_3d
             results['gt_bboxes_ignore'] = processed_gt_bboxes_ignore
         
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         # 把2d车道线按照数据增强矩阵进行转换,3d车道线不用管，因为数据增强矩阵已经乘到了lidar2img矩阵中
         if self.with_lane:
             assert len(results['lane_2d']) == len(results['lane_3d'])#list[Tensor]
@@ -696,7 +724,7 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
                 lane_3d = lane_3d[on_img]
                 # 3. flip
                 if flip:
-                    flipped_lane_2d = lane_2d.copy()
+                    flipped_lane_2d = lane_2d.clone()
                     w = crop[2] - crop[0]
                     flipped_lane_2d[..., 0] = w - lane_2d[..., 0]
                     lane_2d = flipped_lane_2d
@@ -705,6 +733,7 @@ class ResizeCropFlipImageMono(ResizeCropFlipImage):
                 b = torch.Tensor([crop[2] - crop[0], crop[3] - crop[1]]) / 2
                 b = A.matmul(-b) + b
                 lane_2d = lane_2d @ A.numpy().T + b.numpy()[None, None]
+                lane_2d = lane_2d.squeeze(0)
                 on_img = (
                     (lane_2d[..., 0] < (crop[2] - crop[0]))
                     & (lane_2d[..., 0] >= 0)
@@ -901,7 +930,7 @@ class GlobalRotScaleTransImage(object):
             dict: Updated result dict.
         """
         # random rotate
-        rot_angle = np.random.uniform(*self.rot_range)
+        rot_angle = np.random.uniform(*self.rot_range)#弧度
 
         self.rotate_bev_along_z(results, rot_angle)
         if self.reverse_angle:
@@ -911,17 +940,18 @@ class GlobalRotScaleTransImage(object):
         )
         if 'lane_3d' in results:
             # 把车道线也进行旋转
-            rot_sin = torch.sin(rot_angle)
-            rot_cos = torch.cos(rot_angle)
-            ones = torch.ones_like(rot_cos)
-            zeros = torch.zeros_like(rot_cos)
-            rot_mat_T = torch.stack([
-                torch.stack([ones, zeros, zeros]),
-                torch.stack([zeros, rot_cos, rot_sin]),
-                torch.stack([zeros, -rot_sin, rot_cos])
-            ])
             list_lane_3d = []
             for lane_3d in results['lane_3d']:
+                angles = torch.full(lane_3d.shape[:1], rot_angle)
+                rot_sin = torch.sin(angles)
+                rot_cos = torch.cos(angles)
+                ones = torch.ones_like(rot_cos)
+                zeros = torch.zeros_like(rot_cos)
+                rot_mat_T = torch.stack([
+                    torch.stack([rot_cos, rot_sin, zeros]),
+                    torch.stack([-rot_sin, rot_cos, zeros]),
+                    torch.stack([zeros, zeros, ones])
+                ])
                 lane_3d = lane_3d @ rot_mat_T
                 list_lane_3d.append(lane_3d)
             results['lane_3d'] = list_lane_3d
@@ -1148,6 +1178,14 @@ class PhotoMetricDistortionMultiViewImage:
         Returns:
             dict: Result dict with images distorted.
         """
+        # import os
+        # from tools.visualize import visualize_camera, visualize_lidar
+        # sample_token = results['sample_idx']
+        # visualize_camera(
+        #     os.path.join("viz/camera_front_aug_before_PhotoMetricDistortionMultiViewImage", f"{sample_token}.png"),
+        #     results['img'][0],
+        # )
+
         imgs = results['img']
         new_imgs = []
         for img in imgs:
@@ -1198,6 +1236,15 @@ class PhotoMetricDistortionMultiViewImage:
                 img = img[..., np.random.permutation(3)]
             new_imgs.append(img)
         results['img'] = new_imgs
+
+        # import os
+        # from tools.visualize import visualize_camera, visualize_lidar
+        # sample_token = results['sample_idx']
+        # visualize_camera(
+        #     os.path.join("viz/camera_front_aug_after_PhotoMetricDistortionMultiViewImage", f"{sample_token}.png"),
+        #     results['img'][0],
+        # )
+
         return results
 
     def __repr__(self):

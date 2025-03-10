@@ -8,7 +8,7 @@ class_names = [
 ]
 
 plugin_dir = 'mmdet3d_plugin/'
-dataset_type = 'CustomNuScenesDataset'
+dataset_type = 'LANECustomNuScenesDataset'
 data_root = 'data/nuscenes/'
 
 img_norm_cfg = dict(
@@ -32,7 +32,6 @@ ida_aug_conf = {
 
 train_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
-    dict(type='PhotoMetricDistortionMultiViewImage'),
     dict(type='LoadAnnotationsMono3D', with_bbox_3d=True, with_label_3d=True, with_bbox_2d=True, with_attr_label=False),
     dict(type='ObjectRangeFilterMono', point_cloud_range=point_cloud_range, with_bbox_2d=True),
     dict(type='ObjectNameFilterMono', classes=class_names, with_bbox_2d=True),
@@ -50,7 +49,7 @@ train_pipeline = [
     dict(type='CollectMono3D',
          debug=False,
          keys=['gt_bboxes_3d', 'gt_labels_3d', 'gt_bboxes_2d', 'gt_labels_2d', 'gt_bboxes_2d_to_3d', 'gt_bboxes_ignore',
-               'img'])
+               'img', 'lane_2d', 'lane_3d'])
 ]
 test_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),
@@ -86,6 +85,7 @@ data = dict(
         modality=input_modality,
         test_mode=False,
         use_valid_flag=True,
+        with_velocity=False,
         # we use box_type_3d='LiDAR' in kitti and nuscenes dataset
         # and box_type_3d='Depth' in sunrgbd and scannet dataset.
         box_type_3d='LiDAR'

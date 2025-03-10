@@ -25,18 +25,65 @@ from mmdet3d.core.bbox import CameraInstance3DBoxes, LiDARInstance3DBoxes, get_b
 
 
 @DATASETS.register_module()
-class CustomNuScenesDataset(NuScenesDataset):
-    r"""NuScenesMono Dataset.
+class LANECustomNuScenesDataset(NuScenesDataset):
+    """NuScenesMono Dataset.
     This dataset add camera intrinsics and extrinsics and 2d bbox to the results.
     """
     def __init__(self, ann_file_2d, load_separate=False, **kwargs):
-        self.load_separate = load_separate
+        self.load_separate = load_separate#True
         self.ann_file_2d = ann_file_2d
-        super(CustomNuScenesDataset, self).__init__(**kwargs)
+        super(LANECustomNuScenesDataset, self).__init__(**kwargs)
         self.load_annotations_2d(ann_file_2d)
 
     def __len__(self):
-        return super(CustomNuScenesDataset, self).__len__()
+        return super(LANECustomNuScenesDataset, self).__len__()
+
+    def __getitem__(self, idx):
+        """Get item from infos according to the given index.
+
+        Returns:
+            dict: Data dictionary of the corresponding index.
+        """
+        if self.test_mode:
+            return self.prepare_test_data(idx)
+        while True:
+            data = self.prepare_train_data(idx)
+            if data is None:
+                idx = self._rand_another(idx)
+                continue
+            # 这里添加debug可视化信息
+            # import ipdb; ipdb.set_trace()
+            # from tools.visualize import visualize_camera, visualize_lidar
+            # sample_token = data['img_metas'].data['sample_idx']
+            # img = data['img'].data.numpy().copy()#(1, 3, 512, 1408) N*C*H*W
+            # img_hwc = img.transpose(0,2,3,1).squeeze(0)#(512, 1408, 3)
+            # mean = [123.675, 116.28, 103.53]
+            # std = [58.395, 57.12, 57.375]
+            # img_hwc *= std
+            # img_hwc += mean#反ImageNormalize操作,rgb顺序
+            # img_hwc = img_hwc[..., [2, 1, 0]]#转换为bgr顺序
+            
+            # from PIL import Image, ImageDraw
+            # img = Image.fromarray(np.uint8(img_hwc))
+            # draw = ImageDraw.Draw(img)#前向图片绘制车道线投影
+            # point_color = (255, 0, 0)
+            # # import ipdb; ipdb.set_trace()
+            # for points_2d in data['lane_2d']:
+            #     for (x, y) in points_2d:
+            #         draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
+            # img_hwc = np.array(img).astype(np.float32)
+                    
+            # visualize_camera(
+            #     os.path.join("viz/camera_front_aug", f"{sample_token}.png"),
+            #     img_hwc,
+            #     bboxes=data['gt_bboxes_3d'].data,
+            #     labels=data['gt_labels_3d'].data,
+            #     transform=data['img_metas'].data['lidar2img'][0],
+            #     classes=self.CLASSES,
+            # )
+            # import ipdb; ipdb.set_trace()
+
+            return data
 
     def load_annotations(self, ann_file):
         data = mmcv.load(ann_file, file_format='pkl')
@@ -70,10 +117,10 @@ class CustomNuScenesDataset(NuScenesDataset):
         results['box_type_3d'] = self.box_type_3d
         results['box_mode_3d'] = self.box_mode_3d
 
-    def load_annotations_2d(self, ann_file):
+    def load_annotations_2d(self, ann_file):#加载2D标注数据
         self.coco = COCO(ann_file)
         self.cat_ids = self.coco.get_cat_ids(cat_names=self.CLASSES)
-        self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}
+        self.cat2label = {cat_id: i for i, cat_id in enumerate(self.cat_ids)}#类别序号dict
         self.impath_to_imgid = {}
         self.imgid_to_dataid = {}
         data_infos = []
@@ -88,6 +135,8 @@ class CustomNuScenesDataset(NuScenesDataset):
             total_ann_ids.extend(ann_ids)
         assert len(set(total_ann_ids)) == len(
             total_ann_ids), f"Annotation ids in '{ann_file}' are not unique!"
+        """
+        """
         self.data_infos_2d = data_infos
 
     def impath_to_ann2d(self, impath):
@@ -97,7 +146,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         ann_info = self.coco.load_anns(ann_ids)
         return self.get_ann_info_2d(self.data_infos_2d[data_id], ann_info)
 
-    def get_data_info(self, index):
+    def get_data_info(self, index):#调用这个
         """Get data info according to the given index.
         Args:
             index (int): Index of the sample data to get.
@@ -122,7 +171,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         input_dict = dict(
             sample_idx=info['token'],
             pts_filename=info['lidar_path'],
-            sweeps=info['sweeps'],
+            # sweeps=info['sweeps'],#lane_3d pkl中没有sweep字段
             timestamp=info['timestamp'] / 1e6,
         )
 
@@ -131,7 +180,7 @@ class CustomNuScenesDataset(NuScenesDataset):
         intrinsics = []
         extrinsics = []
         img_timestamp = []
-        for cam_type, cam_info in info['cams'].items():
+        for cam_type, cam_info in info['cams'].items():#遍历6个相机
             img_timestamp.append(cam_info['timestamp'] / 1e6)
             image_paths.append(cam_info['data_path'])
             # obtain lidar to image transformation matrix
@@ -194,6 +243,13 @@ class CustomNuScenesDataset(NuScenesDataset):
             annos['gt_labels_2d'] = gt_labels_2d
             annos['gt_bboxes_2d_to_3d'] = gt_bboxes_2d_to_3d
             annos['gt_bboxes_ignore'] = gt_bboxes_ignore
+        
+        if 'lane_3d' in info:
+            input_dict['lane_3d'] = info['lane_3d']
+        if 'lane_2d' in info:
+            input_dict['lane_2d'] = info['lane_2d']
+        # import ipdb; ipdb.set_trace()
+
         return input_dict
 
     def center_match(self, bboxes_a, bboxes_b):

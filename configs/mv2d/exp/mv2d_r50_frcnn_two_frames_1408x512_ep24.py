@@ -159,7 +159,7 @@ model = dict(
 )
 
 data = dict(
-    workers_per_gpu=0,
+    workers_per_gpu=1,
     train=dict(
         load_separate=True,
     ),

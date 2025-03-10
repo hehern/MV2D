@@ -269,7 +269,7 @@ class MV2DSHead(MV2DHead):
             img_metas[0]['gt_labels_3d'] = ori_gt_labels_3d[0]
 
         results_from_last = self._bbox_forward_train(x, proposal_boxes, img_metas)#?
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         preds = results_from_last['pred']#没有这个key啊？
 
         cls_scores = preds['cls_scores']

@@ -142,7 +142,7 @@ def visualize_lidar(
             plt.scatter(
                 p_tensor[:, 0],
                 p_tensor[:, 1],
-                s=30.0,
+                s=80.0,
                 c="red",
             )
 
