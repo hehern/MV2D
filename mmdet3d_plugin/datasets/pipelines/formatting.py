@@ -15,7 +15,7 @@ class DefaultFormatBundleMono3D(DefaultFormatBundle3D):
     def __call__(self, results):
         results = super(DefaultFormatBundleMono3D, self).__call__(results)
         for key in [
-                'gt_bboxes_2d', 'gt_labels_2d', 'gt_bboxes_2d_to_3d',
+                'gt_bboxes_2d', 'gt_labels_2d', 'gt_bboxes_2d_to_3d', 'lane_2d', 'lane_3d',
         ]:
             if key not in results:
                 continue

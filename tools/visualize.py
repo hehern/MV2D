@@ -31,6 +31,7 @@ def visualize_camera(
     image: np.ndarray,
     *,
     bboxes: Optional[LiDARInstance3DBoxes] = None,
+    bboxes_2d: Optional[np.ndarray] = None,
     labels: Optional[np.ndarray] = None,
     transform: Optional[np.ndarray] = None,
     classes: Optional[List[str]] = None,
@@ -89,7 +90,27 @@ def visualize_camera(
                     thickness,
                     cv2.LINE_AA,
                 )
-        canvas = canvas.astype(np.uint8)
+ 
+    if bboxes_2d is not None and len(bboxes_2d) > 0:
+        for box in bboxes_2d:
+            label = box[5]
+            name = classes[int(label)]
+            left_top = np.array([box[0], box[1]])
+            right_down = np.array([box[2], box[3]])
+            left_down = np.array([box[0], box[3]])
+            right_top = np.array([box[2], box[1]])
+            cor_list = [left_top, right_top, right_down, left_down]
+
+            for i in range(len(cor_list)):
+                cv2.line(
+                    canvas,
+                    cor_list[i].astype(np.int),
+                    cor_list[(i+1)%len(cor_list)].astype(np.int),
+                    color or OBJECT_PALETTE[name],
+                    thickness,
+                    cv2.LINE_AA,
+                )
+    canvas = canvas.astype(np.uint8)
     canvas = cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB)
 
     mmcv.mkdir_or_exist(os.path.dirname(fpath))

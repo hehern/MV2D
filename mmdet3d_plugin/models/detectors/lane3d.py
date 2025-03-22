@@ -25,6 +25,7 @@ class LANE3D(Base3DDetector):
                  test_cfg=None,
                  use_grid_mask=None,
                  init_cfg=None,
+                 num_views=1,
                  **kwargs,
                  ):
         super(Base3DDetector, self).__init__(init_cfg)
@@ -43,6 +44,7 @@ class LANE3D(Base3DDetector):
 
         self.train_cfg = train_cfg
         self.test_cfg = test_cfg
+        self.num_views = num_views
 
     def process_2d_gt(self, gt_bboxes, gt_labels, device):
         """
@@ -127,31 +129,30 @@ class LANE3D(Base3DDetector):
         return feat
 
     def forward_train(self,
-                      img,          #
-                      img_metas,    #
-                      gt_bboxes_2d, #
-                      gt_labels_2d, #
-                      gt_bboxes_2d_to_3d,
-                      gt_bboxes_3d,
-                      gt_labels_3d,
+                      img,          #图片，tensor, [batch_size, 1, 3, 512, 1408]
+                      img_metas,    #原始信息，list,len=4,keys:'num_views', 'filename', 'ori_shape', 'img_shape', 'lidar2img', 'pad_shape', 'scale_factor', 'box_mode_3d', 'box_type_3d', 'img_norm_cfg', 'sample_idx', 'pts_filename', 'intrinsics', 'extrinsics', 'timestamp'
+                      gt_bboxes_2d, #2d标注(每个batch内依次所有相机上的gt），list[list]，tensor，len()=batch_size, len(0)=num_views
+                      gt_labels_2d, #2d标注类别，list[list],tensor
+                      gt_bboxes_2d_to_3d, #2d到3d目标映射表，list[list],tensor
+                      gt_bboxes_3d,       #3d标注框(当前帧所有的），list[LiDARInstance3DBoxes]，len()=bs
+                      gt_labels_3d,       #3d标注类别,list[tensor],len()=bs
+                      lane_2d,            #2d车道线，list,len()=bs
+                      lane_3d,            #3d车道线, list,len()=bs
                       attr_labels=None,
                       gt_bboxes_ignore=None):
 
-        import ipdb; ipdb.set_trace()
         losses = dict()
 
-        batch_size, num_views, c, h, w = img.shape
-        img = img.view(batch_size * num_views, *img.shape[2:])
-        assert batch_size == 1, 'only support batch_size 1 now'
+        batch_size, num_views, c, h, w = img.shape#4,1,3,512,1408
+        img = img.view(batch_size * num_views, *img.shape[2:])#[4, 3, 512, 1408]
+        assert num_views == 1, 'only support front camera now'
 
         if self.use_grid_mask:#true
             img = self.grid_mask(img)
 
-        # get pseudo monocular input
+        # step1: get pseudo monocular input
         # gt_bboxes, gt_labels, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore, img_metas:
-        #   independent GT for each view
-        # ori_gt_bboxes_3d, ori_gt_labels_3d:
-        #   original GT for all the views
+        #   independent GT for front camera
         ori_img_metas, ori_gt_bboxes_3d, ori_gt_labels_3d, ori_gt_bboxes_ignore = img_metas, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore
         gt_bboxes, gt_labels, gt_bboxes_3d, gt_labels_3d, gt_bboxes_ignore, img_metas = [], [], [], [], [], []
         for i in range(batch_size):
@@ -174,65 +175,53 @@ class LANE3D(Base3DDetector):
                 select = gt_ids[gt_ids > -1].long()
                 gt_bboxes_3d.append(gt_bboxes_3d_views[select])
                 gt_labels_3d.append(gt_labels_3d_views[select])
-            # no GT in previous frames
-            for j in range(self.num_views, num_views):
-                box_type = gt_bboxes_3d[0].__class__
-                box_dim = gt_bboxes_3d[0].tensor.size(-1)
-                gt_bboxes_3d.append(box_type(img.new_zeros((0, box_dim)), box_dim=box_dim))
-                gt_labels_3d.append(img.new_zeros(0, dtype=torch.long))
 
             gt_bboxes.extend(gt_bboxes_2d[i])
             gt_labels.extend(gt_labels_2d[i])
             gt_bboxes_ignore.extend(ori_gt_bboxes_ignore[i])
 
-        # calculate losses for base detector
-        if not self.grad_all:
-            detector_feat_current = self.extract_feat(img[:self.num_views])
-            with torch.no_grad():
-                detector_feat_history = self.extract_feat(img[self.num_views:])#sweep提取特征但不进行梯度更新
-            detector_feat = [torch.cat([x1, x2]) for x1, x2 in zip(detector_feat_current, detector_feat_history)]
-        else:#
-            detector_feat = self.extract_feat(img)#关键帧和非关键帧都提取2d特征
-            detector_feat_current = [x[:self.num_views] for x in detector_feat]#关键帧的特征
-            detector_feat_history = [x[self.num_views:] for x in detector_feat]#sweep的特征
+        # step2: extract 2d feature
+        detector_feat = self.extract_feat(img)#提取2d特征
 
-        # only the current frame is used in 2D detection loss
-        img_current = img[:self.num_views]
-        img_metas_current = img_metas[:self.num_views]
+        # step3: calculate 2D detection loss
         losses_detector = self.base_detector.forward_train_w_feat(
-            detector_feat_current,
-            img_current,
-            img_metas_current,
+            detector_feat,
+            img,
+            img_metas,
             gt_bboxes,
             gt_labels,
             gt_bboxes_ignore)
         for k, v in losses_detector.items():
             losses['det_' + k] = v
-
-        # generate 2D detection
+        """
+        losses:
+            'loss_rpn_cls': len()=5,
+            'loss_rpn_bbox': len()=5,
+            'loss_cls': len()=1,
+            'acc': len()=1,
+            'loss_bbox': len()=1,
+        """
+        
+        # step4: generate 2D detection
         with torch.no_grad():#不计算梯度
             self.base_detector.set_detection_cfg(self.train_cfg.get('detection_proposal'))
-            results = self.base_detector.simple_test_w_feat(detector_feat, img_metas)
-            detections = self.process_2d_detections(results, img.device)#2dbox
+            results = self.base_detector.simple_test_w_feat(detector_feat, img_metas)#得到每个类别的检测结果，[num_boxes, 5->(x1, y1, x2, y2, score)]
+            detections = self.process_2d_detections(results, img.device)##检测得到的2dbox根据参数中的min_bbox_size过滤
 
-        if self.train_cfg.get('complement_2d_gt', -1) > 0:#0.4
-            detections_gt = self.process_2d_gt(gt_bboxes, gt_labels, img.device)
-            detections_gt = detections_gt + [img.new_zeros((0, 6))] * (num_views - self.num_views)
+        if self.train_cfg.get('complement_2d_gt', -1) > 0:#0.4,使用gt进行补偿
+            detections_gt = self.process_2d_gt(gt_bboxes, gt_labels, img.device)#[num_boxes, 4->(x1, y1, x2, y2)]->[num_boxes, 6->(x1, y1, x2, y2, 1, label)]
             detections = [self.complement_2d_gt(det, det_gt, thr=self.train_cfg.get('complement_2d_gt'))
-                          for det, det_gt in zip(detections, detections_gt)]#这里是根据gt对检测box做了神马操作？
+                          for det, det_gt in zip(detections, detections_gt)]#依次对每张图片，把漏检的gt和det cat到一起
 
-        # calculate losses for 3d detector
-        if not self.grad_all:
-            feat_current = self.process_detector_feat(detector_feat_current)
-            with torch.no_grad():
-                feat_history = self.process_detector_feat(detector_feat_history)
-            feat = [torch.cat([x1, x2]) for x1, x2 in zip(feat_current, feat_history)]
-        else:#
-            feat = self.process_detector_feat(detector_feat)#neck网络
+        # step5: extract feature
+        feat = self.process_detector_feat(detector_feat)#neck网络,feat tuple,feat[0].shape=[bs, 256, 32, 88]
 
-        # 将2dbox投影到数据增强之后的图片上，和车道线位置进行比较，得到深度、宽度、高度
-        # 用2d特征估计长度和yaw
-        # 保存loss
+        # step6: calculate losses for lane_3d detector
+        roi_losses = self.roi_head.forward_train(feat, img, img_metas, detections,                           # num_views
+                                                 gt_bboxes, gt_labels, gt_bboxes_3d, gt_labels_3d,      # self.num_views
+                                                 lane_2d, lane_3d,
+                                                 attr_labels, None)#MV2DTHead
+
         losses.update(roi_losses)
         return losses
 

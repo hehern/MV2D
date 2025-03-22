@@ -9,16 +9,16 @@ roi_srides = [16]
 
 model = dict(
     type='LANE3D',
-    use_grid_mask=dict(
-        use_h=True,
-        use_w=True,
-        rotate=1,
-        offset=False,
-        ratio_range=(0.4, 0.6),
-        mode=1,
-        prob=0.7,
-        interv_ratio=0.8
-    ),
+    # use_grid_mask=dict(
+    #     use_h=True,
+    #     use_w=True,
+    #     rotate=1,
+    #     offset=False,
+    #     ratio_range=(0.4, 0.6),
+    #     mode=1,
+    #     prob=0.7,
+    #     interv_ratio=0.8
+    # ),
     # NOTE:
     # the FPN in faster r-cnn starts from p2
     # we use p4 (downsample rate: 16)
