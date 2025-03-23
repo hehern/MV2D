@@ -18,7 +18,7 @@ class_names = [
     'car', 'truck', 'trailer', 'bus', 'construction_vehicle', 'bicycle',
     'motorcycle', 'pedestrian', 'traffic_cone', 'barrier'
 ]
-def draw_proposal_on_img(proposal_boxes, img, lane_2d):
+def draw_proposal_on_img(proposal_boxes, img, img_metas):
     from tools.visualize import visualize_camera
     import os
     img_cpu = img.cpu().numpy()#(bs, 3, 512, 1408) bs*C*H*W
@@ -29,13 +29,13 @@ def draw_proposal_on_img(proposal_boxes, img, lane_2d):
     img_hwc += mean#反ImageNormalize操作,rgb顺序
     img_hwc = img_hwc[..., [2, 1, 0]]#转换为bgr顺序
 
-    for i in range(img.shape[0]):
+    for i in range(img.shape[0]):#bs
         # 绘制车道线
         from PIL import Image, ImageDraw
         img_single = Image.fromarray(np.uint8(img_hwc[i]))
         draw = ImageDraw.Draw(img_single)
         point_color = (255, 0, 0)
-        for points_2d in lane_2d[i]:
+        for points_2d in img_metas[i]['lane_2d']:
             for (x, y) in points_2d:
                 draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
         img_single = np.array(img_single).astype(np.float32)
@@ -91,8 +91,8 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                       gt_labels,    #2d gt label
                       gt_bboxes_3d, #3d gt
                       gt_labels_3d, #3d gt label
-                      lane_2d,      #2d车道线,list,len=bs,
-                      lane_3d,      #2d车道线，lidar frame下，右前天坐标系
+                    #   lane_2d,      #2d车道线,list,len=bs,
+                    #   lane_3d,      #2d车道线，lidar frame下，右前天坐标系
                       attr_labels,
                       gt_bboxes_ignore=None,
                       gt_masks=None,
@@ -113,12 +113,13 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         # step1: 根据proposal_boxes位置和车道线估计3dbox最近表面位置、宽度、高度
         
         # 1.1 坐标进行插值，注意这里使用的是
-        pos_xy, width = self._interpolation_get_pos(proposal_boxes, lane_2d, lane_3d, img.shape[2], img.shape[3])
+        pos_xy_width = self._interpolation_get_pos(proposal_boxes, img_metas)
         # 1.2 将proposal_boxes以及插值结果可视化在图片上
-        draw_proposal_on_img(proposal_boxes, img, lane_2d)
+        # draw_proposal_on_img(proposal_boxes, img, img_metas)
 
         # step2: 设计网络获取观察角度theta_l, 并得到最终的theta(偏航角) = theta_l(观察角度) + theta_ray(arctan(z/x)
         losses = dict()
+        import ipdb; ipdb.set_trace()
 
         # step3: 输入类别、前向坐标、xy坐标、宽度、高度，估计位置误差、长度、宽度误差、高度误差
         results_from_last = self._bbox_forward_train(x, proposal_boxes, img_metas)
@@ -158,19 +159,20 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         return losses
 
-    def _interpolation_get_pos(self, proposal_boxes, lane_2d, lane_3d, img_h, img_w):
+    def _interpolation_get_pos(self, proposal_boxes, img_metas):
         """对proposal_boxes右下角坐标进行插值处理得到位置xy"""
-        import ipdb; ipdb.set_trace()
+        # import ipdb; ipdb.set_trace()
         proposal_boxes_3d_bs = []
+        img_h = img_metas[0]['img_shape'][0]
         for i in range(len(proposal_boxes)):#bs
             bboxes_2d = proposal_boxes[i].cpu().numpy()
+            proposal_boxes_3d = []
             if bboxes_2d is not None and len(bboxes_2d) > 0:
-                proposal_boxes_3d = []
                 for box_id, box in enumerate(bboxes_2d):
                     right_down = np.array([box[2], box[3]])
                     result_pairs = []
                     #筛选出将box右下角坐标夹在图像纵向（y坐标）的lane_2d点对，再从中筛选出横向（x坐标）距离最近的
-                    for tensor_idx, tensor in enumerate(lane_2d[i]):
+                    for tensor_idx, tensor in enumerate(img_metas[i]['lane_2d']):
                         points = tensor.numpy()
                         n = points.shape[0]
                         for j in range(n):
@@ -195,7 +197,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                         closest_result_pair = None
                         for tensor_idx, j, k in result_pairs:
                             # 提取对应的 tensor 中的点
-                            point = lane_2d[i][tensor_idx][j, :] #这里的 j 是点的索引，k 可能在这个场景下不用
+                            point = img_metas[i]['lane_2d'][tensor_idx][j, :] #这里的 j 是点的索引，k 可能在这个场景下不用
                             # 计算 x 轴上的距离
                             distance_x = abs(float(point[0]) - float(right_down[0]))
                             # 更新最小距离和对应的序号
@@ -204,15 +206,24 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                                 closest_idx = tensor_idx  # 这里保存的是 tensor 的索引，如果需要保存整体的序号 (tensor_idx, j, k)，则保存 result_pair
                                 closest_result_pair = (tensor_idx, j, k)
                         if closest_idx != -1:
+
                             tensor_idx, j, k = closest_result_pair
-                            y1 = lane_2d[i][tensor_idx][j][1]
-                            y2 = lane_2d[i][tensor_idx][k][1]
-                            x1 = lane_2d[i][tensor_idx][j][0]
-                            x2 = lane_2d[i][tensor_idx][k][0]
+                            y1 = img_metas[i]['lane_2d'][tensor_idx][j][1]
+                            y2 = img_metas[i]['lane_2d'][tensor_idx][k][1]
+                            x1 = img_metas[i]['lane_2d'][tensor_idx][j][0]
+                            x2 = img_metas[i]['lane_2d'][tensor_idx][k][0]
+                            y1_3d = img_metas[i]['lane_3d'][tensor_idx][j][1]
+                            y2_3d = img_metas[i]['lane_3d'][tensor_idx][k][1]
+                            x1_3d = img_metas[i]['lane_3d'][tensor_idx][j][0]
+                            x2_3d = img_metas[i]['lane_3d'][tensor_idx][k][0]
+                            
                             box_middle_x = (box[0] + box[2]) / 2.0
-                            y_3d = (right_down[1] - y1) / (y2 - y1) * (lane_3d[i][k][1] - lane_3d[i][j][1]) + lane_3d[i][j][1]
-                            x_3d = (box_middle_x - x1) / (x2 - x1) * (lane_3d[i][k][0] - lane_3d[i][j][0]) + lane_3d[i][j][0]
-                            proposal_boxes_3d.append((box_id, x_3d, y_3d))
+                            y_3d = (right_down[1] - y1) / (y2 - y1) * (y2_3d - y1_3d) + y1_3d
+                            x_3d = (box_middle_x - x1) / (x2 - x1) * (x2_3d - x1_3d) + x1_3d
+                            width = (box[0] + box[2]) / (x2 - x1) * (x2_3d - x1_3d)
+                            proposal_boxes_3d.append(torch.tensor([box_id, float(x_3d), float(y_3d), float(width)]))
+            proposal_boxes_3d_bs.append(proposal_boxes_3d)
+        return proposal_boxes_3d_bs
 
     def _bbox_forward_train(self, x, proposal_list, img_metas):
         """Run forward function and calculate loss for box head in training."""

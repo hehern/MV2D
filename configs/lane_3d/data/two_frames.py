@@ -49,7 +49,7 @@ train_pipeline = [
     dict(type='CollectMono3D',
          debug=False,
          keys=['gt_bboxes_3d', 'gt_labels_3d', 'gt_bboxes_2d', 'gt_labels_2d', 'gt_bboxes_2d_to_3d', 'gt_bboxes_ignore',
-               'img', 'lane_2d', 'lane_3d'])
+               'img'])
 ]
 test_pipeline = [
     dict(type='LoadMultiViewImageFromFiles', to_float32=True),

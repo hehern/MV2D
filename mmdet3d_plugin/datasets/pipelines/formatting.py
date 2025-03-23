@@ -15,7 +15,7 @@ class DefaultFormatBundleMono3D(DefaultFormatBundle3D):
     def __call__(self, results):
         results = super(DefaultFormatBundleMono3D, self).__call__(results)
         for key in [
-                'gt_bboxes_2d', 'gt_labels_2d', 'gt_bboxes_2d_to_3d', 'lane_2d', 'lane_3d',
+                'gt_bboxes_2d', 'gt_labels_2d', 'gt_bboxes_2d_to_3d',
         ]:
             if key not in results:
                 continue
@@ -37,7 +37,8 @@ class CollectMono3D(Collect3D):
                    'box_type_3d', 'img_norm_cfg', 'pcd_trans', 'sample_idx',
                    'pcd_scale_factor', 'pcd_rotation', 'pcd_rotation_angle',
                    'pts_filename', 'transformation_3d_flow', 'trans_mat',
-                   'affine_aug', 'intrinsics', 'extrinsics', 'timestamp'),
+                   'affine_aug', 'intrinsics', 'extrinsics', 'timestamp',
+                   'lane_2d', 'lane_3d'),
         debug=False,
         classes=('car', 'truck', 'trailer', 'bus', 'construction_vehicle', 'bicycle', 'motorcycle',
                  'pedestrian', 'traffic_cone', 'barrier', 'ignore'),

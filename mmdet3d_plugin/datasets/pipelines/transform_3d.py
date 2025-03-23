@@ -942,15 +942,14 @@ class GlobalRotScaleTransImage(object):
             # 把车道线也进行旋转
             list_lane_3d = []
             for lane_3d in results['lane_3d']:
-                angles = torch.full(lane_3d.shape[:1], rot_angle)
-                rot_sin = torch.sin(angles)
-                rot_cos = torch.cos(angles)
+                rot_sin = torch.sin(torch.tensor(rot_angle))
+                rot_cos = torch.cos(torch.tensor(rot_angle))
                 ones = torch.ones_like(rot_cos)
                 zeros = torch.zeros_like(rot_cos)
-                rot_mat_T = torch.stack([
-                    torch.stack([rot_cos, rot_sin, zeros]),
-                    torch.stack([-rot_sin, rot_cos, zeros]),
-                    torch.stack([zeros, zeros, ones])
+                rot_mat_T = torch.tensor([
+                    [rot_cos, rot_sin, zeros],
+                    [-rot_sin, rot_cos, zeros],
+                    [zeros, zeros, ones]
                 ])
                 lane_3d = lane_3d @ rot_mat_T
                 list_lane_3d.append(lane_3d)
@@ -969,7 +968,6 @@ class GlobalRotScaleTransImage(object):
             results['lane_3d'] = list_lane_3d
 
         # TODO: support translation
-
         return results
 
     def rotate_bev_along_z(self, results, angle):

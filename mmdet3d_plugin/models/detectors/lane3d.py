@@ -72,7 +72,7 @@ class LANE3D(Base3DDetector):
             [torch.cat([torch.tensor(boxes), torch.full((len(boxes), 1), label_id, dtype=torch.float)], dim=1) for
              label_id, boxes in
              enumerate(res)], dim=0).to(device) for res in results]
-        # import ipdb; ipdb.set_trace()
+
         if self.train_cfg is not None:
             min_bbox_size = self.train_cfg['detection_proposal'].get('min_bbox_size', 0)
         else:
@@ -136,8 +136,6 @@ class LANE3D(Base3DDetector):
                       gt_bboxes_2d_to_3d, #2d到3d目标映射表，list[list],tensor
                       gt_bboxes_3d,       #3d标注框(当前帧所有的），list[LiDARInstance3DBoxes]，len()=bs
                       gt_labels_3d,       #3d标注类别,list[tensor],len()=bs
-                      lane_2d,            #2d车道线，list,len()=bs
-                      lane_3d,            #3d车道线, list,len()=bs
                       attr_labels=None,
                       gt_bboxes_ignore=None):
 
@@ -160,7 +158,9 @@ class LANE3D(Base3DDetector):
             for j in range(num_views):
                 img_meta = dict(num_views=num_views)
                 for k, v in img_metas_views.items():
-                    if isinstance(v, list):
+                    if k == 'lane_2d' or k == 'lane_3d':
+                        img_meta[k] = v
+                    elif isinstance(v, list):
                         img_meta[k] = v[j]
                     elif k == 'ori_shape':
                         img_meta[k] = v[:3]
@@ -219,8 +219,7 @@ class LANE3D(Base3DDetector):
         # step6: calculate losses for lane_3d detector
         roi_losses = self.roi_head.forward_train(feat, img, img_metas, detections,                           # num_views
                                                  gt_bboxes, gt_labels, gt_bboxes_3d, gt_labels_3d,      # self.num_views
-                                                 lane_2d, lane_3d,
-                                                 attr_labels, None)#MV2DTHead
+                                                 attr_labels, None)#LANE3DHead
 
         losses.update(roi_losses)
         return losses
