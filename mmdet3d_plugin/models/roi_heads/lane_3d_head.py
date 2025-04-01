@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import copy
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -9,8 +10,6 @@ from mmdet.models.roi_heads.base_roi_head import BaseRoIHead
 from mmdet.models.roi_heads.test_mixins import BBoxTestMixin, MaskTestMixin
 from mmdet.core import bbox2roi
 from mmdet.models.builder import HEADS, build_head, build_roi_extractor
-from mmdet3d_plugin.models.utils.pe import PE
-from mmcv.cnn import ConvModule
 
 import numpy as np
 
@@ -69,6 +68,29 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         self.stage_loss_weights = train_cfg.get('stage_loss_weights') if train_cfg else None
         self.force_fp32 = force_fp32
 
+    @torch.no_grad()
+    def get_box_params(self, bboxes, intrinsics, extrinsics):
+        # TODO: check grad flow from boxes to intrinsic
+        intrinsic_list = []
+        extrinsic_list = []
+        for img_id, (bbox, intrinsic, extrinsic) in enumerate(zip(bboxes, intrinsics, extrinsics)):
+            # bbox: [n, (x, y, x, y)], rois_i: [n, c, h, w], intrinsic: [4, 4], extrinsic: [4, 4]
+            intrinsic = torch.from_numpy(intrinsic).to(bbox.device).double()
+            extrinsic = torch.from_numpy(extrinsic).to(bbox.device).double()
+            intrinsic = intrinsic.repeat(bbox.shape[0], 1, 1)
+            extrinsic = extrinsic.repeat(bbox.shape[0], 1, 1)
+            # consider corners
+            wh_bbox = bbox[:, 2:4] - bbox[:, :2]
+            wh_roi = wh_bbox.new_tensor(self.roi_size)
+            scale = wh_roi[None] / wh_bbox
+            intrinsic[:, :2, 2] = intrinsic[:, :2, 2] - bbox[:, :2] - 0.5 / scale
+            intrinsic[:, :2] = intrinsic[:, :2] * scale[..., None]
+            intrinsic_list.append(intrinsic)
+            extrinsic_list.append(extrinsic)
+        intrinsic_list = torch.cat(intrinsic_list, 0)
+        extrinsic_list = torch.cat(extrinsic_list, 0)
+        return intrinsic_list, extrinsic_list
+
     def init_assigner_sampler(self):
         self.bbox_assigner = None
         self.bbox_sampler = None
@@ -110,58 +132,35 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             proposal_scores.append(proposal_list[i][:, 4])
             proposal_classes.append(proposal_list[i][:, 5])
 
+                # avoid empty 2D detection
+        if sum([len(p) for p in proposal_boxes]) == 0:#2D检测框为0的情况下
+            proposal = torch.tensor([[0, 50, 50, 100, 100, 0]], dtype=proposal_boxes[0].dtype,
+                                    device=proposal_boxes[0].device)
+            proposal_boxes = [proposal] + proposal_boxes[1:]#填充假的
+
         # step1: 根据proposal_boxes位置和车道线估计3dbox最近表面位置、宽度、高度
-        
-        # 1.1 坐标进行插值，注意这里使用的是
-        pos_xy_width = self._interpolation_get_pos(proposal_boxes, img_metas)
+        # 1.1 坐标进行插值
+        pos_xy_wh = self._interpolation_get_pos(proposal_boxes, img_metas)
         # 1.2 将proposal_boxes以及插值结果可视化在图片上
         # draw_proposal_on_img(proposal_boxes, img, img_metas)
 
-        # step2: 设计网络获取观察角度theta_l, 并得到最终的theta(偏航角) = theta_l(观察角度) + theta_ray(arctan(z/x)
+        # step2: 网络获取theta_l, 并得到最终的theta(偏航角) = theta_l + theta_ray(arctan(z/x)
         losses = dict()
-        import ipdb; ipdb.set_trace()
 
-        # step3: 输入类别、前向坐标、xy坐标、宽度、高度，估计位置误差、长度、宽度误差、高度误差
-        results_from_last = self._bbox_forward_train(x, proposal_boxes, img_metas)
+        # step3: 输入类别、xy坐标、宽度、高度，估计位置误差、长度、宽度误差、高度误差
+        bbox_results = self._bbox_forward(x, proposal_boxes, pos_xy_wh)
 
-        preds = results_from_last['pred']
-
-        cls_scores = preds['cls_scores']
-        bbox_preds = preds['bbox_preds']
-        loss_weights = copy.deepcopy(self.stage_loss_weights)#[0.1, 0.1, 0.1, 0.1, 0.1, 0.1]
-
-        # step4: use the matching results from last stage for loss calculation
-        loss_stage = []
-        num_layers = len(cls_scores)
-        for layer in range(num_layers):
-            loss_bbox = self.bbox_head.loss(
-                ori_gt_bboxes_3d, ori_gt_labels_3d, {'cls_scores': [cls_scores[num_layers - 1 - layer]],
-                                                     'bbox_preds': [bbox_preds[num_layers - 1 - layer]]},
-            )
-            loss_stage.insert(0, loss_bbox)
-
-        if results_from_last.get('dn_mask_dict', None) is not None:
-            dn_mask_dict = results_from_last['dn_mask_dict']
-            known_labels, known_bboxs, output_known_class, output_known_coord, num_tgt = self.prepare_for_dn_loss(
-                dn_mask_dict)
-            for i in range(len(output_known_class)):
-                dn_loss_cls, dn_loss_bbox = self.bbox_head.dn_loss_single(
-                    output_known_class[i], output_known_coord[i], known_bboxs, known_labels, num_tgt,
-                    self.pc_range, self.denoise_split, neg_bbox_loss=self.neg_bbox_loss
-                )
-                losses[f'l{i}.dn_loss_cls'] = dn_loss_cls * self.denoise_weight * loss_weights[i]
-                losses[f'l{i}.dn_loss_bbox'] = dn_loss_bbox * self.denoise_weight * loss_weights[i]
-
-        for layer in range(num_layers):
-            lw = loss_weights[layer]
-            for k, v in loss_stage[layer].items():
-                losses[f'l{layer}.{k}'] = v * lw if 'loss' in k else v
+        # step4: use the matching results for loss calculation
+        loss_bbox = self.bbox_head.loss(
+            gt_bboxes_3d, gt_labels_3d, bbox_results,
+        )
+        for k, v in loss_bbox.items():
+            losses['3d_' + k] = v
 
         return losses
 
     def _interpolation_get_pos(self, proposal_boxes, img_metas):
         """对proposal_boxes右下角坐标进行插值处理得到位置xy"""
-        # import ipdb; ipdb.set_trace()
         proposal_boxes_3d_bs = []
         img_h = img_metas[0]['img_shape'][0]
         for i in range(len(proposal_boxes)):#bs
@@ -186,9 +185,11 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                     if not result_pairs:
                         #没有找到点对:如果是比较近的点就赋值很近，如果是远的点就赋值max,其余情况可能是没有车道线就暂时舍弃掉
                         if right_down[1] > (img_h-10):#很近的地方
-                            proposal_boxes_3d.append((box_id, x_3d, 0.0))
+                            proposal_boxes_3d.append(torch.tensor([box_id, 0.0, self.pc_range[1], 1.0, 1.0]))
                         elif right_down[1] < (10):#很远的地方
-                            proposal_boxes_3d.append((box_id, x_3d, 50.0))
+                            proposal_boxes_3d.append(torch.tensor([box_id, 0.0, self.pc_range[4], 1.0, 1.0]))
+                        else:#填充假的
+                            proposal_boxes_3d.append(torch.tensor([box_id, 0.0, self.pc_range[4], 1.0, 1.0]))
 
                     else:
                         # 初始化最小距离和对应的序号
@@ -220,134 +221,61 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                             box_middle_x = (box[0] + box[2]) / 2.0
                             y_3d = (right_down[1] - y1) / (y2 - y1) * (y2_3d - y1_3d) + y1_3d
                             x_3d = (box_middle_x - x1) / (x2 - x1) * (x2_3d - x1_3d) + x1_3d
-                            width = (box[0] + box[2]) / (x2 - x1) * (x2_3d - x1_3d)
-                            proposal_boxes_3d.append(torch.tensor([box_id, float(x_3d), float(y_3d), float(width)]))
+                            width = abs((box[0] - box[2]) / (x2 - x1) * (x2_3d - x1_3d))
+                            height = abs((box[1] - box[3]) / (box[0] - box[2])) * width
+                            proposal_boxes_3d.append(torch.tensor([box_id, float(x_3d), float(y_3d), float(width), float(height)]))
+                        else:
+                            proposal_boxes_3d.append(torch.tensor([box_id, self.pc_range[3], self.pc_range[4], 1.0, 1.0]))
             proposal_boxes_3d_bs.append(proposal_boxes_3d)
         return proposal_boxes_3d_bs
-
-    def _bbox_forward_train(self, x, proposal_list, img_metas):
-        """Run forward function and calculate loss for box head in training."""
-
-        bbox_results = self._bbox_forward(x, proposal_list, img_metas)
-        bbox_results.update(pred={'cls_scores': bbox_results['cls_scores'], 'bbox_preds': bbox_results['bbox_preds']})
-
-        return bbox_results
     
-    def _bbox_forward(self, x, proposal_list, img_metas):
-        time_stamp = np.array([img_meta['timestamp'] for img_meta in img_metas])#12个时间戳
-        mean_time_stamp = time_stamp[self.num_views:].mean() - time_stamp[:self.num_views].mean()#前一帧的6张图片的时间戳均值-当前帧的6张图片时间戳均值,约为0.5
+    def _bbox_forward(self, 
+                      x,              #tuple(tensor),len()=1,tensor.shape=[bs, 256, 32, 88]
+                      proposal_list,  #list(tensor),len()=bs,tensor.shape=[n,6]
+                      pos_xy_wh):
 
-        bbox_results = self._bbox_forward_denoise(x, proposal_list, img_metas)
+        rois = bbox2roi(proposal_list)#给每个框的编码前加一个所属的图片索引,变成5维的向量，最后把所有的cat一下，变成(sum(n),5)的tensor
 
-        if len(img_metas) > self.num_views:#12>6
-            bbox_preds = bbox_results['bbox_preds']#预测box
-            bbox_preds_with_time = [
-                torch.cat([pred[..., :8], pred[..., 8:] / mean_time_stamp], dim=-1) for pred in bbox_preds]#这是在干啥？
-            bbox_results['bbox_preds'] = bbox_preds_with_time#把处理过的新预测box填充回对应字段
-
-        return bbox_results
-    
-    def _bbox_forward_denoise(self, x, proposal_list, img_metas):
-        # avoid empty 2D detection
-        if sum([len(p) for p in proposal_list]) == 0:#2D检测框为0的情况下
-            proposal = torch.tensor([[0, 50, 50, 100, 100, 0]], dtype=proposal_list[0].dtype,
-                                    device=proposal_list[0].device)
-            proposal_list = [proposal] + proposal_list[1:]#填充假的
-
-        rois = bbox2roi(proposal_list)#给每个框的编码前加一个所属的图片索引,变成5维的向量，最后把所有的cat一下，变成(n,5)的tensor
-        intrinsics, extrinsics = self.get_box_params(proposal_list,
-                                                     [img_meta['intrinsics'] for img_meta in img_metas],
-                                                     [img_meta['extrinsics'] for img_meta in img_metas])
-        # 把不同size的候选框从原图上映射到选中的feature map上，然后转化为设定好的等长向量(譬如7x7),x0[[12, 512, 32, 88]],eg:bbox_feats[40, 512, 7, 7]
+        # 把不同size的候选框从原图上映射到选中的feature map上，然后转化为设定好的等长向量(譬如7x7),x0[[12, 256, 32, 88]],eg:bbox_feats[sum(n), 256, 7, 7]
         bbox_feats = self.bbox_roi_extractor(
             x[:self.bbox_roi_extractor.num_inputs], rois)
 
-        # 3dpe was concatenated to fpn feature
-        c = bbox_feats.size(1)#特征维度:512
-        bbox_feats, _ = bbox_feats.split([c // 2, c // 2], dim=1)#只要前256维度特征，即只要图像特征，不要pe
+        # 估计box误差(sigma_x, sigma_y, sigma_w, l, z, sigma_h, theta_local)
+        all_cls_scores, all_bbox_preds = self.bbox_head(bbox_feats)#[sum(n), 7]
 
-        # intrinsics as extra input feature
-        extra_feats = dict(
-            intrinsic=self.process_intrins_feat(rois, intrinsics)
-        )
+        # 封装bbox_preds
+        bs = len(proposal_list)
+        proposal_list_size = []
+        for i in range(bs):
+            proposal_list_size.append(proposal_list[i].shape[0])
+        proposal_boxes_3d_bs = []
+        all_cls_scores_bs = []
+        for i in range(bs):#遍历batch中的每张图片
+            proposal_boxes_3d = []
+            global_index_list = []
+            for box in pos_xy_wh[i]:
+                local_index = box[0]
+                global_index = int(local_index + sum(proposal_list_size[:i]))
+                global_index_list.append(global_index)
+                x = box[1] + all_bbox_preds[global_index][0]
+                y = box[2] + all_bbox_preds[global_index][1]
+                z = all_bbox_preds[global_index][4]
+                w = box[3] + all_bbox_preds[global_index][2]
+                l = all_bbox_preds[global_index][3]
+                h = box[4] + all_bbox_preds[global_index][5]
+                theta_local = all_bbox_preds[global_index][6]
+                theta_global = theta_local + math.atan2(box[2], box[1])
+                proposal_boxes_3d.append(torch.tensor([x, y, w, l, z, h, theta_global.sin(), theta_global.cos(), 0.0, 0.0], requires_grad=True, dtype=all_bbox_preds.dtype).to(all_bbox_preds.device))
+            proposal_boxes_3d = torch.stack(proposal_boxes_3d, dim=0)
+            proposal_boxes_3d_bs.append(proposal_boxes_3d)
+            cls_scores = all_cls_scores[global_index_list, :]
+            all_cls_scores_bs.append(cls_scores)
 
-        # query generator
-        reference_points, return_feats = self.query_generator(bbox_feats, intrinsics, extrinsics, extra_feats)
-        reference_points[..., 0:1] = (reference_points[..., 0:1] - self.pc_range[0]) / (
-                self.pc_range[3] - self.pc_range[0])
-        reference_points[..., 1:2] = (reference_points[..., 1:2] - self.pc_range[1]) / (
-                self.pc_range[4] - self.pc_range[1])
-        reference_points[..., 2:3] = (reference_points[..., 2:3] - self.pc_range[2]) / (
-                self.pc_range[5] - self.pc_range[2])
-        reference_points.clamp(min=0, max=1)
-
-        # split image features and 3dpe
-        feat, pe = x[self.feat_lvl].split([c // 2, c // 2], dim=1)  # [num_views, c, h, w]
-        stride = self.strides[self.feat_lvl]
-
-        # box correlation
-        num_rois_per_img = [len(p) for p in proposal_list]
-        feat_for_rois = self.box_corr_module.gen_box_correlation(rois, num_rois_per_img, img_metas, feat, stride)
-
-        # generate image padding mask
-        num_views, c, h, w = feat.shape
-        mask = torch.zeros_like(feat[:, 0]).bool()  # [num_views, h, w]
-        input_img_h, input_img_w, _ = img_metas[0]['pad_shape']
-        mask_outside = feat.new_ones((1, num_views, input_img_h, input_img_w))
-        for img_id in range(num_views):
-            img_h, img_w, _ = img_metas[img_id]['img_shape']
-            mask_outside[0, img_id, :img_h, :img_w] = 0
-        mask_outside = F.interpolate(mask_outside, size=feat.shape[-2:]).to(torch.bool)[0]
-        mask[mask_outside] = 1
-
-        # generate cross attention mask
-        cross_attn_mask = ~feat_for_rois
-        if self.training:
-            invalid_rois = cross_attn_mask.view(cross_attn_mask.size(0), -1).all(1)
-            cross_attn_mask[invalid_rois, 0, 0, 0] = 0
-
-        roi_mask = (~cross_attn_mask).any(dim=0)  # [num_views, h, w], 1 for valid
-        feat = feat.permute(0, 2, 3, 1)[roi_mask][..., None, None]  # [num_valid, c, 1, 1]
-        pe = pe.permute(0, 2, 3, 1)[roi_mask][..., None, None]
-        mask = mask[roi_mask][..., None, None]
-        cross_attn_mask = cross_attn_mask[:, roi_mask][..., None, None]  # [num_rois, num_valid, 1, 1]
-
-        # denoise training
-        if self.use_denoise:
-            num_ori_reference = len(reference_points)
-            reference_points, attn_mask, mask_dict = self.prepare_for_dn(
-                1, reference_points, img_metas[0:1], num_ori_reference)
-            reference_points = reference_points[0]
-            num_pad_reference = len(reference_points) - num_ori_reference
-            pad_cross_attn_mask = cross_attn_mask.all(dim=0)[None].repeat(num_pad_reference, 1, 1, 1)
-            cross_attn_mask = torch.cat([pad_cross_attn_mask, cross_attn_mask], dim=0)
-        else:
-            attn_mask = None
-            mask_dict = None
-
-        all_cls_scores, all_bbox_preds = self.bbox_head(reference_points[None],
-                                                        feat[None],
-                                                        mask[None],
-                                                        pe[None],
-                                                        attn_mask=attn_mask,
-                                                        cross_attn_mask=cross_attn_mask,
-                                                        force_fp32=self.force_fp32, )#all_cls_scores:[6, 1, 120, 10],all_bbox_preds:[6, 1, 120, 10]
-
-        if mask_dict and mask_dict['pad_size'] > 0:
-            output_known_class = all_cls_scores[:, :, :mask_dict['pad_size'], :]#[6, 1, 80, 10]
-            output_known_coord = all_bbox_preds[:, :, :mask_dict['pad_size'], :]#[6, 1, 80, 10]
-            mask_dict['output_known_lbs_bboxes'] = (output_known_class, output_known_coord)#mask_dict.keys()=['known_indice', 'batch_idx', 'map_known_indice', 'known_lbs_bboxes', 'know_idx', 'pad_size', 'output_known_lbs_bboxes']
-            all_cls_scores = all_cls_scores[:, :, mask_dict['pad_size']:, :]#[6, 1, 40, 10]
-            all_bbox_preds = all_bbox_preds[:, :, mask_dict['pad_size']:, :]
-
-        cls_scores, bbox_preds = [], []
-        for c, b in zip(all_cls_scores, all_bbox_preds):
-            cls_scores.append(c.flatten(0, 1))
-            bbox_preds.append(b.flatten(0, 1))
-
+        # 返回结果
         bbox_results = dict(
-            cls_scores=cls_scores, bbox_preds=bbox_preds, bbox_feats=bbox_feats, return_feats=return_feats,
-            intrinsics=intrinsics, extrinsics=extrinsics, rois=rois, dn_mask_dict=mask_dict,
+            cls_scores=all_cls_scores_bs,#a按照bs分成list
+            bbox_preds=proposal_boxes_3d_bs,
         )
 
         return bbox_results
+    

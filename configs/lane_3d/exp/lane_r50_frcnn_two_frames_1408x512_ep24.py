@@ -46,37 +46,11 @@ model = dict(
             type='SingleRoIExtractor',
             roi_layer=dict(type='RoIAlign', output_size=roi_size, sampling_ratio=-1),
             featmap_strides=roi_srides,
-            out_channels=512, ),
+            out_channels=256, ),
         bbox_head=dict(
-            type='CrossAttentionBoxHead',
+            type='LANEBoxHead',
             num_classes=10,
             pc_range=point_cloud_range,
-            transformer=dict(
-                type='MV2DTransformer',
-                decoder=dict(
-                    type='PETRTransformerDecoder',
-                    return_intermediate=True,
-                    num_layers=6,
-                    transformerlayers=dict(
-                        type='PETRTransformerDecoderLayer',
-                        attn_cfgs=[
-                            dict(
-                                type='FlattenMHSelfAttention',
-                                embed_dims=256,
-                                num_heads=8,
-                                dropout=0.1),
-                            dict(
-                                type='PETRMultiheadAttention',
-                                embed_dims=256,
-                                num_heads=8,
-                                dropout=0.1),
-                        ],
-                        feedforward_channels=2048,
-                        ffn_dropout=0.1,
-                        with_cp=True,  ###use checkpoint to save memory
-                        operation_order=('self_attn', 'norm', 'cross_attn', 'norm',
-                                         'ffn', 'norm')),
-                )),
             bbox_coder=dict(
                 type='NMSFreeCoder',
                 post_center_range=post_range,

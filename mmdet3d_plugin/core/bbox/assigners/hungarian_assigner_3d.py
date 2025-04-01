@@ -63,10 +63,10 @@ class HungarianAssigner3D(BaseAssigner):
         self.pc_range = pc_range
 
     def assign(self,
-               bbox_pred,
-               cls_pred,
-               gt_bboxes, 
-               gt_labels,
+               bbox_pred,      #[n,10]
+               cls_pred,       #[n,10],eg:cls_pred[0]=[-4.7305, -4.4961, -5.7344, -4.2031, -4.7617, -3.7930, -5.1445, -3.9707, -4.5586, -5.1406]
+               gt_bboxes,      #[m,9]
+               gt_labels,      #[m].eg:[0, 8, 0, 0, 0, 0, 7, 0]
                gt_bboxes_ignore=None,
                eps=1e-7):
         """Computes one-to-one matching based on the weighted costs.
@@ -83,12 +83,12 @@ class HungarianAssigner3D(BaseAssigner):
            and assign the corresponding gt index (plus 1) to it.
         Args:
             bbox_pred (Tensor): Predicted boxes with normalized coordinates
-                (cx, cy, w, h), which are all in range [0, 1]. Shape
-                [num_query, 4].
+                (cx, cy, w, l, cz, h, rot_sine, rot_cosine, vx, vy). 
+                Shape [num_query, 10].
             cls_pred (Tensor): Predicted classification logits, shape
                 [num_query, num_class].
             gt_bboxes (Tensor): Ground truth boxes with unnormalized
-                coordinates (x1, y1, x2, y2). Shape [num_gt, 4].
+                coordinates (x, y, z, x_size, y_size, z_size, yaw, vx, vy). Shape [num_gt, 9].
             gt_labels (Tensor): Label of `gt_bboxes`, shape (num_gt,).
             gt_bboxes_ignore (Tensor, optional): Ground truth bboxes that are
                 labelled as `ignored`. Default None.
@@ -120,8 +120,8 @@ class HungarianAssigner3D(BaseAssigner):
         # classification and bboxcost.
         cls_cost = self.cls_cost(cls_pred, gt_labels)
         # regression L1 cost
-        normalized_gt_bboxes = normalize_bbox(gt_bboxes, self.pc_range)
-        reg_cost = self.reg_cost(bbox_pred[:, :8], normalized_gt_bboxes[:, :8])
+        normalized_gt_bboxes = normalize_bbox(gt_bboxes, self.pc_range)#调整gt_bboxes的顺序与bbox_pred一致
+        reg_cost = self.reg_cost(bbox_pred[:, :8], normalized_gt_bboxes[:, :8])#计算pred_box与gt_box之间的L1距离
       
         # weighted sum of above two costs
         cost = cls_cost + reg_cost

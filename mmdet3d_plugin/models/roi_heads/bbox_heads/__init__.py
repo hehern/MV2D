@@ -1,2 +1,3 @@
 from .cross_attention_head import CrossAttentionBoxHead
-__all__ = ['CrossAttentionBoxHead', ]
+from .lane_box_head import LANEBoxHead
+__all__ = ['CrossAttentionBoxHead', 'LANEBoxHead']
