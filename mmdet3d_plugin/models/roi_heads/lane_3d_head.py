@@ -244,33 +244,24 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         all_cls_scores, all_bbox_preds = self.bbox_head(bbox_feats)#[sum(n), 7]
 
         # 封装bbox_preds
-        bs = len(proposal_list)
-        proposal_list_size = []
-        for i in range(bs):
-            proposal_list_size.append(proposal_list[i].shape[0])
-        proposal_boxes_3d_bs = []
-        all_cls_scores_bs = []
-        for i in range(bs):#遍历batch中的每张图片
-            proposal_boxes_3d = []
-            global_index_list = []
-            for box in pos_xy_wh[i]:
-                local_index = box[0]
-                global_index = int(local_index + sum(proposal_list_size[:i]))
-                global_index_list.append(global_index)
-                x = box[1] + all_bbox_preds[global_index][0]
-                y = box[2] + all_bbox_preds[global_index][1]
-                z = all_bbox_preds[global_index][4]
-                w = box[3] + all_bbox_preds[global_index][2]
-                l = all_bbox_preds[global_index][3]
-                h = box[4] + all_bbox_preds[global_index][5]
-                theta_local = all_bbox_preds[global_index][6]
-                theta_global = theta_local + math.atan2(box[2], box[1])
-                proposal_boxes_3d.append(torch.tensor([x, y, w, l, z, h, theta_global.sin(), theta_global.cos(), 0.0, 0.0], requires_grad=True, dtype=all_bbox_preds.dtype).to(all_bbox_preds.device))
-            proposal_boxes_3d = torch.stack(proposal_boxes_3d, dim=0)
-            proposal_boxes_3d_bs.append(proposal_boxes_3d)
-            cls_scores = all_cls_scores[global_index_list, :]
-            all_cls_scores_bs.append(cls_scores)
+        tensors_pos_xy_wh = [tensor for sublist in pos_xy_wh for tensor in sublist]
+        pos_xy_wh = torch.stack(tensors_pos_xy_wh, dim=0).to(all_bbox_preds.device)
+        assert pos_xy_wh.shape[0] == all_bbox_preds.shape[0], 'The number of 3d_boxes and 2d_boxes is not equal.'
+        
+        new_columns = torch.cat((all_bbox_preds[:, 6:7], torch.zeros(all_bbox_preds.shape[0], 2, dtype=all_bbox_preds.dtype, device=all_bbox_preds.device)), dim=1)
+        all_bbox_preds = torch.cat((all_bbox_preds, new_columns), dim=1)
+        all_bbox_preds[:, 0] += pos_xy_wh[:, 1]
+        all_bbox_preds[:, 1] += pos_xy_wh[:, 2]
+        all_bbox_preds[:, 2] += pos_xy_wh[:, 3]
+        all_bbox_preds[:, 5] += pos_xy_wh[:, 4]
+        all_bbox_preds[:, 6] = (all_bbox_preds[:, 6] + torch.atan2(pos_xy_wh[:, 2], pos_xy_wh[:, 1])).sin()
+        all_bbox_preds[:, 7] = (all_bbox_preds[:, 7] + torch.atan2(pos_xy_wh[:, 2], pos_xy_wh[:, 1])).cos()
 
+        group_sizes = [p.shape[0] for p in proposal_list]
+        all_cls_scores_bs = torch.split(all_cls_scores, group_sizes, dim=0)
+        proposal_boxes_3d_bs = torch.split(all_bbox_preds, group_sizes, dim=0)
+
+        # import ipdb; ipdb.set_trace()
         # 返回结果
         bbox_results = dict(
             cls_scores=all_cls_scores_bs,#a按照bs分成list

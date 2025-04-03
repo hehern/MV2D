@@ -289,9 +289,9 @@ class CrossAttentionBoxHead(BaseModule):
         label_weights = gt_bboxes.new_ones(num_bboxes)
 
         # bbox targets
-        code_size = gt_bboxes.size(1)
-        bbox_targets = torch.zeros_like(bbox_pred)[..., :code_size]
-        bbox_weights = torch.zeros_like(bbox_pred)
+        code_size = gt_bboxes.size(1)#9
+        bbox_targets = torch.zeros_like(bbox_pred)[..., :code_size]#[n,9]
+        bbox_weights = torch.zeros_like(bbox_pred)#[n,10]
         bbox_weights[pos_inds] = 1.0
         # DETR
         if sampling_result.pos_gt_bboxes.shape[1] == 4:
@@ -386,8 +386,8 @@ class CrossAttentionBoxHead(BaseModule):
                     cls_reg_targets=None,
                     gt_bboxes_ignore_list=None):
 
-        num_imgs = len(cls_scores)
-        cls_scores_list = [cls_scores[i] for i in range(num_imgs)]
+        num_imgs = len(cls_scores)#bs
+        cls_scores_list = [cls_scores[i] for i in range(num_imgs)]#按照bs，分成list
         bbox_preds_list = [bbox_preds[i] for i in range(num_imgs)]
         if cls_reg_targets is None:
             cls_reg_targets = self.get_targets(cls_scores_list, bbox_preds_list,
@@ -443,10 +443,9 @@ class CrossAttentionBoxHead(BaseModule):
         assert gt_bboxes_ignore is None, \
             f'{self.__class__.__name__} only supports ' \
             f'for gt_bboxes_ignore setting to None.'
-
-        cls_scores = preds_dicts['cls_scores']#list[tensor],tensor.shape=[n,10],n表示当前帧有n个目标，10为类别score
-        bbox_preds = preds_dicts['bbox_preds']#list[tensor],tensor.shape=[n,10],顺序是啥来着？？？？
-
+        
+        cls_scores = preds_dicts['cls_scores']#list[tensor],len=bs,tensor.shape=[n,10],n表示当前帧有n个目标，10为类别score
+        bbox_preds = preds_dicts['bbox_preds']#list[tensor],len=bs,tensor.shape=[n,10],顺序是啥来着？？？？
 
         device = gt_labels_3d_list[0].device#cuda
         gt_bboxes_3d_list = [torch.cat(

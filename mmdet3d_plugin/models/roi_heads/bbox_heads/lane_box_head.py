@@ -188,7 +188,7 @@ class LANEBoxHead(BaseModule):
        # DETR
         if sampling_result.pos_gt_bboxes.shape[1] == 4:
             bbox_targets[pos_inds] = sampling_result.pos_gt_bboxes.reshape(sampling_result.pos_gt_bboxes.shape[0],
-                                                                           code_size)
+                                                                           self.code_size - 1)
         else:
             bbox_targets[pos_inds] = sampling_result.pos_gt_bboxes
 
@@ -297,7 +297,7 @@ class LANEBoxHead(BaseModule):
         bbox_weights = bbox_weights * self.code_weights
 
         loss_bbox = self.loss_bbox(
-            bbox_preds[isnotnan, :8], normalized_bbox_targets[isnotnan, :8], bbox_weights[isnotnan, :8],
+            bbox_preds[isnotnan, :10], normalized_bbox_targets[isnotnan, :10], bbox_weights[isnotnan, :10],
             avg_factor=num_total_pos)
 
         loss_cls = torch.nan_to_num(loss_cls)

@@ -241,7 +241,7 @@ def filter_pkl(info):
     del info['cams']['CAM_BACK']
     del info['cams']['CAM_BACK_LEFT']
     del info['cams']['CAM_BACK_RIGHT']
-    del info['gt_velocity']
+    # del info['gt_velocity']
     del info['num_radar_pts']
 
     # 2.根据当前sample token判断属于哪个地图
@@ -253,7 +253,7 @@ def filter_pkl(info):
     map_lane = map_locations[map_name]
 
     # 3.将车道线点投影到前向图片上
-    img = Image.open(info['cams']['CAM_FRONT']['data_path'])
+    img = Image.open(info['cams']['CAM_FRONT']['data_path'])#rgb
     # img.save('viz/lane/'+sample_token+'.jpg')
     lane_3d, lane_2d = project_lane_to_img(img, map_lane, info['cams']['CAM_FRONT'], sample_token)#返回list[tensor]
 
@@ -261,7 +261,7 @@ def filter_pkl(info):
     info['lane_3d'] = lane_3d #lidar坐标系下
     info['lane_2d'] = lane_2d #前向图片坐标系下
 
-    draw_2d_points_to_image(img, info)
+    # draw_2d_points_to_image(img, info)
     # import ipdb; ipdb.set_trace()
 
     return True
@@ -334,7 +334,7 @@ if __name__ == "__main__":
 
     # step2: filter pkl
     key_infos = pickle.load(open(os.path.join(dataroot, 'nuscenes_infos_{}.pkl'.format(info_prefix)), 'rb'))
-    info_path = os.path.join(dataroot, 'mmdet3d_nuscenes_front_lane_infos_{}.pkl'.format(info_prefix))
+    info_path = os.path.join(dataroot, 'mmdet3d_nuscenes_front_lane_infos_{}_vel.pkl'.format(info_prefix))
 
     data_infos = key_infos["infos"]
     filtered_data_infos = []
@@ -344,8 +344,8 @@ if __name__ == "__main__":
         info = data_infos[index]
         # 删除无效字段 & 投影车道线点并添加lane字段
         if filter_pkl(info):
-            filtered_data_infos.append(info)
+            filtered_data_infos.append(info)        
 
     # step3: save pkl
-    data = dict(infos=filtered_data_infos)
+    data = dict(infos=filtered_data_infos, metadata=key_infos["metadata"])
     mmcv.dump(data, info_path)
