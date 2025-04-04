@@ -91,6 +91,10 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         extrinsic_list = torch.cat(extrinsic_list, 0)
         return intrinsic_list, extrinsic_list
 
+    @property
+    def num_classes(self):
+        return self.bbox_head.num_classes
+
     def init_assigner_sampler(self):
         self.bbox_assigner = None
         self.bbox_sampler = None
@@ -245,6 +249,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         # 封装bbox_preds
         tensors_pos_xy_wh = [tensor for sublist in pos_xy_wh for tensor in sublist]
+        # print("all_bbox_preds.shape[0] = " + str(all_bbox_preds.shape[0]) + ", len tensors_pos_xy_wh = " + str(len(tensors_pos_xy_wh)))
         pos_xy_wh = torch.stack(tensors_pos_xy_wh, dim=0).to(all_bbox_preds.device)
         assert pos_xy_wh.shape[0] == all_bbox_preds.shape[0], 'The number of 3d_boxes and 2d_boxes is not equal.'
         
@@ -270,3 +275,20 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         return bbox_results
     
+    def simple_test(self, x, proposal_list, img_metas, rescale=False):
+        assert self.with_bbox, 'Bbox head must be implemented.'
+
+        if sum([len(p) for p in proposal_list]) == 0:#2D检测框为0的情况下
+            proposal = torch.tensor([[0, 50, 50, 100, 100, 0]], dtype=proposal_list[0].dtype,
+                                    device=proposal_list[0].device)
+            proposal_list = [proposal] + proposal_list[1:]#填充假的
+
+        pos_xy_wh = self._interpolation_get_pos(proposal_list, img_metas)
+        bbox_results = self._bbox_forward(x, proposal_list, pos_xy_wh)
+
+        cls_scores = bbox_results['cls_scores'][-1]
+        bbox_preds = bbox_results['bbox_preds'][-1]
+
+        bbox_list = self.bbox_head.get_bboxes({'cls_scores': [cls_scores], 'bbox_preds': [bbox_preds]}, img_metas,)
+
+        return bbox_list

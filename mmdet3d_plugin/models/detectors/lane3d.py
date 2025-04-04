@@ -225,13 +225,13 @@ class LANE3D(Base3DDetector):
         return losses
 
     def forward_test(self, img, img_metas, **kwargs):
-        num_augs = len(img)
+        num_augs = len(img)#1
         if num_augs != len(img_metas):
             raise ValueError(
                 'num of augmentations ({}) != num of image meta ({})'.format(
                     len(img), len(img_metas)))
 
-        if num_augs == 1:
+        if num_augs == 1:#true
             return self.simple_test(img[0], img_metas[0], **kwargs)
         else:
             return self.aug_test(img, img_metas, **kwargs)
@@ -239,24 +239,26 @@ class LANE3D(Base3DDetector):
     def simple_test(self, img, img_metas, proposal_bboxes=None, proposal_labels=None, rescale=False, **kwargs):
 
         # process multi-view inputs
-        batch_size, num_views, c, h, w = img.shape
-        img = img.view(batch_size * num_views, c, h, w)
-        ori_img_metas = img_metas
+        batch_size, num_views, c, h, w = img.shape#[1,1,3,512,1408]
+        img = img.view(batch_size * num_views, c, h, w)#[1,3,512,1408]
+        ori_img_metas = img_metas#list[dict]
         img_metas = []
         gt_bboxes, gt_labels = [], []
-        for i in range(batch_size):
+        for i in range(batch_size):#1
             img_metas_views = ori_img_metas[i]
             for j in range(num_views):
                 img_meta = dict(num_views=num_views)
                 for k, v in img_metas_views.items():
-                    if isinstance(v, list):
+                    if k == 'lane_2d' or k == 'lane_3d':
+                        img_meta[k] = v
+                    elif isinstance(v, list):
                         img_meta[k] = v[j]
                     elif k == 'ori_shape':
                         img_meta[k] = v[:3]
                     else:
                         img_meta[k] = v
                 img_metas.append(img_meta)
-            if proposal_bboxes is not None:
+            if proposal_bboxes is not None:#为什么参数没有携带proposal_bboxes？？？？
                 gt_bboxes.extend(proposal_bboxes[i])
                 gt_labels.extend(proposal_labels[i])
 
@@ -275,7 +277,7 @@ class LANE3D(Base3DDetector):
         box_type_3d = img_metas[0]['box_type_3d']
 
         # 3D NMS
-        for i in range(batch_size):
+        for i in range(batch_size):#1
             # bbox_outputs_i: len(num_views)
             bbox_outputs_i = bbox_outputs_all[i * num_views:i * num_views + num_views]
             all_bboxes = box_type_3d.cat([x[0] for x in bbox_outputs_i])
