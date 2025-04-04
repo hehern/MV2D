@@ -132,6 +132,12 @@ class LANEBoxHead(BaseModule):
         all_bbox_preds = self.reg_branch(x)
         all_bbox_preds[..., 6] = all_bbox_preds[..., 6].sigmoid()
         all_bbox_preds[..., 6] = all_bbox_preds[..., 6] * 2 * math.pi - math.pi#角度转换为-pi-pi
+        
+        all_bbox_preds[..., 0:2] = all_bbox_preds[..., 0:2].sigmoid()#sigma_x,sigma_y
+        all_bbox_preds[..., 4:5] = all_bbox_preds[..., 4:5].sigmoid()#z
+        all_bbox_preds[..., 0:1] = (all_bbox_preds[..., 0:1] * (self.pc_range[3] - self.pc_range[0]) + self.pc_range[0])#x
+        all_bbox_preds[..., 1:2] = (all_bbox_preds[..., 1:2] * (self.pc_range[4] - self.pc_range[1]) + self.pc_range[1])#y
+        all_bbox_preds[..., 4:5] = (all_bbox_preds[..., 4:5] * (self.pc_range[5] - self.pc_range[2]) + self.pc_range[2])#z
         return all_cls_scores, all_bbox_preds
 
     def _get_target_single(self,
