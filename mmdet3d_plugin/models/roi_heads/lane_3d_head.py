@@ -164,6 +164,16 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         return losses
 
     def _interpolation_get_pos(self, proposal_boxes, img_metas):
+        bs = len(img_metas)
+        lane_3d = []
+        for index in range(bs):
+            concatenated_tensor = torch.cat(img_metas[index]['lane_3d'], dim=0)
+            lane_3d.append(concatenated_tensor)
+        lane_3d = torch.cat(lane_3d, dim=0)
+        # if torch.isnan(lane_3d).any():
+        #     print(lane_3d)
+        assert not torch.isnan(lane_3d).any(), 'img_metas lane_3d has nan data'
+
         """对proposal_boxes右下角坐标进行插值处理得到位置xy"""
         proposal_boxes_3d_bs = []
         img_h = img_metas[0]['img_shape'][0]
@@ -227,6 +237,15 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                             x_3d = (box_middle_x - x1) / (x2 - x1) * (x2_3d - x1_3d) + x1_3d
                             width = abs((box[0] - box[2]) / (x2 - x1) * (x2_3d - x1_3d))
                             height = abs((box[1] - box[3]) / (box[0] - box[2])) * width
+                            # import ipdb; ipdb.set_trace()
+                            if math.isnan(float(x_3d)):
+                                print('x_3d nan')
+                            if math.isnan(float(y_3d)):
+                                print('y_3d nan')
+                            if math.isnan(float(width)):
+                                print('width nan')
+                            if math.isnan(float(height)):
+                                print('height nan')
                             proposal_boxes_3d.append(torch.tensor([box_id, float(x_3d), float(y_3d), float(width), float(height)]))
                         else:
                             proposal_boxes_3d.append(torch.tensor([box_id, self.pc_range[3], self.pc_range[4], 1.0, 1.0]))
@@ -252,7 +271,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         # print("all_bbox_preds.shape[0] = " + str(all_bbox_preds.shape[0]) + ", len tensors_pos_xy_wh = " + str(len(tensors_pos_xy_wh)))
         pos_xy_wh = torch.stack(tensors_pos_xy_wh, dim=0).to(all_bbox_preds.device)
         assert pos_xy_wh.shape[0] == all_bbox_preds.shape[0], 'The number of 3d_boxes and 2d_boxes is not equal.'
-        
+        assert not torch.isnan(pos_xy_wh).any(), 'pos_xy_wh has nan data'
         new_columns = torch.cat((all_bbox_preds[:, 6:7], torch.zeros(all_bbox_preds.shape[0], 2, dtype=all_bbox_preds.dtype, device=all_bbox_preds.device)), dim=1)
         all_bbox_preds = torch.cat((all_bbox_preds, new_columns), dim=1)
         all_bbox_preds[:, 0] += pos_xy_wh[:, 1]
