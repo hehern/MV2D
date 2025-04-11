@@ -49,6 +49,8 @@ def draw_proposal_on_img(proposal_boxes, img, img_metas, closest_result_pair_lis
                     draw.ellipse((x-5, y-5, x+5, y+5), fill=(0, 255, 0))
                     draw.ellipse((box[2].cpu()-5, box[3].cpu()-5, box[2].cpu()+5, box[3].cpu()+5), fill=(0, 255, 0))
                     draw.line([(x, y), (box[2].cpu(), box[3].cpu())], fill=(0, 255, 0), width=2)
+                    # next_x, next_y = img_metas[i]['lane_2d'][tensor_idx][k, :]
+                    # draw.line([(x, y), (next_x, next_y)], fill=(0, 255, 255), width=2)
 
         img_single = np.array(img_single).astype(np.float32)
 
@@ -205,7 +207,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                         points = tensor.numpy()
                         n = points.shape[0]
                         for j in range(n):
-                            k = (i+1)%n
+                            k = (j+1)%n
                             _, y1 = points[j]
                             _, y2 = points[k]
                             # 检查是否满足 y 坐标将 right_down 的 y 坐标夹在中间的条件
