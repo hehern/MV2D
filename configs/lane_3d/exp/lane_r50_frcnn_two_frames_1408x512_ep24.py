@@ -2,8 +2,8 @@ _base_ = [
     '../data/two_frames.py', '../detectors/maskrcnn_r50.py'
 ]
 
-point_cloud_range = [-51.2, -51.2, -5.0, 51.2, 51.2, 3.0]
-post_range = [-61.2, -61.2, -10.0, 61.2, 61.2, 10.0]
+point_cloud_range = [-20.0, 0.0, -5.0, 20.0, 60.0, 3.0]
+post_range = [-30.0, 0.0, -5.0, 30.0, 70.0, 3.0]
 roi_size = 7
 roi_srides = [16]
 

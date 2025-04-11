@@ -180,15 +180,15 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
         return losses
 
     def _interpolation_get_pos(self, proposal_boxes, img_metas):
-        bs = len(img_metas)
-        lane_3d = []
-        for index in range(bs):
-            concatenated_tensor = torch.cat(img_metas[index]['lane_3d'], dim=0)
-            lane_3d.append(concatenated_tensor)
-        lane_3d = torch.cat(lane_3d, dim=0)
+        # bs = len(img_metas)
+        # lane_3d = []
+        # for index in range(bs):
+        #     concatenated_tensor = torch.cat(img_metas[index]['lane_3d'], dim=0)
+        #     lane_3d.append(concatenated_tensor)
+        # lane_3d = torch.cat(lane_3d, dim=0)
         # if torch.isnan(lane_3d).any():
         #     print(lane_3d)
-        assert not torch.isnan(lane_3d).any(), 'img_metas lane_3d has nan data'
+        # assert not torch.isnan(lane_3d).any(), 'img_metas lane_3d has nan data'
 
         """对proposal_boxes右下角坐标进行插值处理得到位置xy"""
         proposal_boxes_3d_bs = []
