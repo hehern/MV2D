@@ -324,7 +324,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
             proposal_list = [proposal] + proposal_list[1:]#填充假的
 
         pos_xy_wh, closest_result_pair_list_bs = self._interpolation_get_pos(proposal_list, img_metas)
-        draw_proposal_on_img(proposal_list, img, img_metas, closest_result_pair_list_bs)
+        # draw_proposal_on_img(proposal_list, img, img_metas, closest_result_pair_list_bs)
         bbox_results = self._bbox_forward(x, proposal_list, pos_xy_wh)
 
         cls_scores = bbox_results['cls_scores'][-1]
