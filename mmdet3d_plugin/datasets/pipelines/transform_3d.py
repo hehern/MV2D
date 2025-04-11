@@ -199,12 +199,27 @@ class NormalizeMultiviewImage(object):
             mean=self.mean, std=self.std, to_rgb=self.to_rgb)
 
         # import os
-        # from tools.visualize import visualize_camera
+        # from tools.visualize import visualize_camera, visualize_lidar
         # sample_token = results['sample_idx']
+        # img_hwc = results['img'][0].copy()#(512, 1408, 3)
+        # mean = [123.675, 116.28, 103.53]
+        # std = [58.395, 57.12, 57.375]
+        # img_hwc *= std
+        # img_hwc += mean#反ImageNormalize操作,rgb顺序
+        # img_hwc = img_hwc[..., [2, 1, 0]]#转换为bgr顺序
+        
+        # from PIL import Image, ImageDraw
+        # img = Image.fromarray(np.uint8(img_hwc))
+        # draw = ImageDraw.Draw(img)#前向图片绘制车道线投影
+        # point_color = (255, 0, 0)
+
+        # for points_2d in results['lane_2d']:
+        #     for (x, y) in points_2d:
+        #         draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
+        # img_hwc = np.array(img).astype(np.float32)
         # visualize_camera(
         #     os.path.join("viz/camera_front_aug_after_NormalizeMultiviewImage", f"{sample_token}.png"),
-        #     mmcv.imdenormalize(
-        #         results['img'][0], self.mean, self.std),
+        #     img_hwc,
         # )
         # import ipdb; ipdb.set_trace()
 

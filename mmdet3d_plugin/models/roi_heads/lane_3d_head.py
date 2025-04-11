@@ -17,7 +17,7 @@ class_names = [
     'car', 'truck', 'trailer', 'bus', 'construction_vehicle', 'bicycle',
     'motorcycle', 'pedestrian', 'traffic_cone', 'barrier'
 ]
-def draw_proposal_on_img(proposal_boxes, img, img_metas):
+def draw_proposal_on_img(proposal_boxes, img, img_metas, closest_result_pair_list_bs = None):
     from tools.visualize import visualize_camera
     import os
     img_cpu = img.cpu().numpy()#(bs, 3, 512, 1408) bs*C*H*W
@@ -37,11 +37,25 @@ def draw_proposal_on_img(proposal_boxes, img, img_metas):
         for points_2d in img_metas[i]['lane_2d']:
             for (x, y) in points_2d:
                 draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
+
+        # 绘制距离box最近的车道线点之间的连线
+        if closest_result_pair_list_bs is not None:
+            if len(closest_result_pair_list_bs[i]) != 0:
+                for tmp in closest_result_pair_list_bs[i]:
+                    tensor_idx, j, k, box_id = tmp
+                    # import ipdb; ipdb.set_trace()
+                    x, y = img_metas[i]['lane_2d'][tensor_idx][j, :]
+                    box = proposal_boxes[i][box_id]
+                    draw.ellipse((x-5, y-5, x+5, y+5), fill=(0, 255, 0))
+                    draw.ellipse((box[2].cpu()-5, box[3].cpu()-5, box[2].cpu()+5, box[3].cpu()+5), fill=(0, 255, 0))
+                    draw.line([(x, y), (box[2].cpu(), box[3].cpu())], fill=(0, 255, 0), width=2)
+
         img_single = np.array(img_single).astype(np.float32)
 
         # 绘制pred 2d box
+        sample_token = img_metas[i]['sample_idx']
         visualize_camera(
-            os.path.join("viz/head_draw_proposal_on_img", f"{i}.png"),
+            os.path.join("viz/head_draw_proposal_on_img", f"{sample_token}.png"),
             img_single,
             bboxes_2d=proposal_boxes[i].cpu().numpy(),
             classes=class_names,
@@ -144,9 +158,9 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         # step1: 根据proposal_boxes位置和车道线估计3dbox最近表面位置、宽度、高度
         # 1.1 坐标进行插值
-        pos_xy_wh = self._interpolation_get_pos(proposal_boxes, img_metas)
+        pos_xy_wh, closest_result_pair_list_bs = self._interpolation_get_pos(proposal_boxes, img_metas)
         # 1.2 将proposal_boxes以及插值结果可视化在图片上
-        # draw_proposal_on_img(proposal_boxes, img, img_metas)
+        # draw_proposal_on_img(proposal_boxes, img, img_metas, closest_result_pair_list_bs)
 
         # step2: 网络获取theta_l, 并得到最终的theta(偏航角) = theta_l + theta_ray(arctan(z/x)
         losses = dict()
@@ -176,10 +190,12 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         """对proposal_boxes右下角坐标进行插值处理得到位置xy"""
         proposal_boxes_3d_bs = []
+        closest_result_pair_list_bs = []
         img_h = img_metas[0]['img_shape'][0]
         for i in range(len(proposal_boxes)):#bs
             bboxes_2d = proposal_boxes[i].cpu().numpy()
             proposal_boxes_3d = []
+            closest_result_pair_list = []
             if bboxes_2d is not None and len(bboxes_2d) > 0:
                 for box_id, box in enumerate(bboxes_2d):
                     right_down = np.array([box[2], box[3]])
@@ -221,6 +237,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                                 closest_idx = tensor_idx  # 这里保存的是 tensor 的索引，如果需要保存整体的序号 (tensor_idx, j, k)，则保存 result_pair
                                 closest_result_pair = (tensor_idx, j, k)
                         if closest_idx != -1:
+                            closest_result_pair_list.append(closest_result_pair+(box_id,))
 
                             tensor_idx, j, k = closest_result_pair
                             y1 = img_metas[i]['lane_2d'][tensor_idx][j][1]
@@ -246,11 +263,13 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                                 print('width nan')
                             if math.isnan(float(height)):
                                 print('height nan')
+                            # print("x_3d = " + str(x_3d) + ", y_3d = " + str(y_3d) + ", width = " + str(width) + ", height = " + str(height))
                             proposal_boxes_3d.append(torch.tensor([box_id, float(x_3d), float(y_3d), float(width), float(height)]))
                         else:
                             proposal_boxes_3d.append(torch.tensor([box_id, self.pc_range[3], self.pc_range[4], 1.0, 1.0]))
             proposal_boxes_3d_bs.append(proposal_boxes_3d)
-        return proposal_boxes_3d_bs
+            closest_result_pair_list_bs.append(closest_result_pair_list)
+        return proposal_boxes_3d_bs, closest_result_pair_list_bs
     
     def _bbox_forward(self, 
                       x,              #tuple(tensor),len()=1,tensor.shape=[bs, 256, 32, 88]
@@ -294,7 +313,7 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
 
         return bbox_results
     
-    def simple_test(self, x, proposal_list, img_metas, rescale=False):
+    def simple_test(self, x, proposal_list, img, img_metas, rescale=False):
         assert self.with_bbox, 'Bbox head must be implemented.'
 
         if sum([len(p) for p in proposal_list]) == 0:#2D检测框为0的情况下
@@ -302,7 +321,8 @@ class LANE3DHead(BaseRoIHead, BBoxTestMixin, MaskTestMixin):
                                     device=proposal_list[0].device)
             proposal_list = [proposal] + proposal_list[1:]#填充假的
 
-        pos_xy_wh = self._interpolation_get_pos(proposal_list, img_metas)
+        pos_xy_wh, closest_result_pair_list_bs = self._interpolation_get_pos(proposal_list, img_metas)
+        draw_proposal_on_img(proposal_list, img, img_metas, closest_result_pair_list_bs)
         bbox_results = self._bbox_forward(x, proposal_list, pos_xy_wh)
 
         cls_scores = bbox_results['cls_scores'][-1]

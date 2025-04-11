@@ -45,7 +45,35 @@ class LANECustomNuScenesDataset(NuScenesDataset):
             dict: Data dictionary of the corresponding index.
         """
         if self.test_mode:
-            return self.prepare_test_data(idx)
+            data = self.prepare_test_data(idx)
+
+            # from tools.visualize import visualize_camera, visualize_lidar
+            # sample_token = data['img_metas'][0].data['sample_idx']
+            # img = data['img'][0].data.numpy().copy()#(1, 3, 512, 1408) N*C*H*W
+            # img_hwc = img.transpose(0,2,3,1).squeeze(0)#(512, 1408, 3)
+            # mean = [123.675, 116.28, 103.53]
+            # std = [58.395, 57.12, 57.375]
+            # img_hwc *= std
+            # img_hwc += mean#反ImageNormalize操作,rgb顺序
+            # img_hwc = img_hwc[..., [2, 1, 0]]#转换为bgr顺序
+            
+            # from PIL import Image, ImageDraw
+            # img = Image.fromarray(np.uint8(img_hwc))
+            # draw = ImageDraw.Draw(img)#前向图片绘制车道线投影
+            # point_color = (255, 0, 0)
+
+            # for points_2d in data['img_metas'][0].data['lane_2d']:
+            #     for (x, y) in points_2d:
+            #         draw.ellipse((x-3, y-3, x+3, y+3), fill=point_color)
+            # img_hwc = np.array(img).astype(np.float32)
+                    
+            # visualize_camera(
+            #     os.path.join("viz/camera_front_aug", f"{sample_token}.png"),
+            #     img_hwc,
+            # )
+            # import ipdb; ipdb.set_trace()
+
+            return data
         while True:
             data = self.prepare_train_data(idx)
             if data is None:
